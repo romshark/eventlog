@@ -1,10 +1,11 @@
 package eventlog_test
 
 import (
-	"github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/internal/consts"
 	"fmt"
 	"testing"
+
+	eventlog "github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/internal/const"
 
 	"github.com/stretchr/testify/require"
 )
