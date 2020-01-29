@@ -17,8 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const timeTolerance = 1 * time.Second
+
 type expected []map[string]interface{}
 type Event struct {
+	Offset  uint64
 	Time    time.Time
 	Payload map[string]interface{}
 }
@@ -55,20 +58,29 @@ func ImplementationTest(
 		cleanUp func(t *testing.T),
 	),
 ) {
-	scan := func(l eventlog.EventLog, offset, n uint64) ([]Event, error) {
+	scan := func(
+		l eventlog.EventLog,
+		offset,
+		n uint64,
+	) ([]Event, error) {
 		var events []Event
-		err := l.Scan(offset, n, func(timestamp uint64, payload []byte) bool {
+		err := l.Scan(offset, n, func(
+			timestamp uint64,
+			payload []byte,
+			offset uint64,
+		) error {
 			var data map[string]interface{}
 			if err := json.Unmarshal(payload, &data); err != nil {
-				panic(fmt.Errorf("unexpected error: %w", err))
+				return fmt.Errorf("unexpected error: %w", err)
 			}
 
 			events = append(events, Event{
+				Offset:  offset,
 				Time:    time.Unix(int64(timestamp), 0),
 				Payload: data,
 			})
 
-			return true
+			return nil
 		})
 		return events, err
 	}
@@ -76,16 +88,35 @@ func ImplementationTest(
 	for tname, test := range map[string]func(*testing.T, eventlog.EventLog){
 		"TestAppendRead": func(t *testing.T, l eventlog.EventLog) {
 			// Append first event
-			require.NoError(t, l.Append(PayloadJSON(t, Payload{"ix": 1})))
+			offset1, version1, tm1, err := l.Append(
+				PayloadJSON(t, Payload{"ix": 1}),
+			)
+			require.NoError(t, err)
+			require.Greater(t, version1, offset1)
+			require.WithinDuration(t, time.Now(), tm1, time.Second*1)
 
 			// Append second event
-			require.NoError(t, l.Append(PayloadJSON(t, Payload{"ix": 2})))
+			offset2, version2, tm2, err := l.Append(
+				PayloadJSON(t, Payload{"ix": 2}),
+			)
+			require.NoError(t, err)
+			require.Greater(t, version2, offset2)
+			require.Greater(t, offset2, offset1)
+			require.Greater(t, version2, version1)
+			require.GreaterOrEqual(t, tm2.Unix(), tm1.Unix())
 
 			// Append third event
-			require.NoError(t, l.Append(PayloadJSON(t, Payload{"ix": 3})))
+			offset3, version3, tm3, err := l.Append(
+				PayloadJSON(t, Payload{"ix": 3}),
+			)
+			require.NoError(t, err)
+			require.Greater(t, version3, offset3)
+			require.Greater(t, offset3, offset2)
+			require.Greater(t, version3, version2)
+			require.GreaterOrEqual(t, tm3.Unix(), tm2.Unix())
 
 			// Read all events
-			events, err := scan(l, 0, 0)
+			events, err := scan(l, offset1, 0)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -99,13 +130,14 @@ func ImplementationTest(
 		// events with UTF-8 encoded payloads to succeed
 		"TestAppendReadUTF8": func(t *testing.T, l eventlog.EventLog) {
 			// Append first event
-			require.NoError(t, l.Append(PayloadJSON(t, Payload{
+			newOffset, _, _, err := l.Append(PayloadJSON(t, Payload{
 				"ключ":     "значение",
 				"გასაღები": "მნიშვნელობა",
-			})))
+			}))
+			require.NoError(t, err)
 
 			// Read event
-			events, err := scan(l, 0, 0)
+			events, err := scan(l, newOffset, 0)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -120,15 +152,15 @@ func ImplementationTest(
 		"TestReadN": func(t *testing.T, l eventlog.EventLog) {
 			const numEvents = 10
 
+			offsets := make([]uint64, 0, numEvents)
 			for i := 0; i < numEvents; i++ {
-				require.NoError(
-					t,
-					l.AppendCheck(uint64(i), PayloadJSON(t, Payload{"index": i})),
-				)
+				offset, _, _, err := l.Append(PayloadJSON(t, Payload{"index": i}))
+				require.NoError(t, err)
+				offsets = append(offsets, offset)
 			}
 
 			// Read the first half of events
-			events, err := scan(l, 0, 5)
+			events, err := scan(l, l.FirstOffset(), 5)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -140,7 +172,7 @@ func ImplementationTest(
 			})
 
 			// Read the second half of events
-			events, err = scan(l, 5, 5)
+			events, err = scan(l, offsets[5], 5)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -158,14 +190,12 @@ func ImplementationTest(
 			const numEvents = 5
 
 			for i := 0; i < numEvents; i++ {
-				require.NoError(
-					t,
-					l.AppendCheck(uint64(i), PayloadJSON(t, Payload{"index": i})),
-				)
+				_, _, _, err := l.Append(PayloadJSON(t, Payload{"index": i}))
+				require.NoError(t, err)
 			}
 
 			// Read more events than there actually are
-			events, err := scan(l, 0, numEvents)
+			events, err := scan(l, l.FirstOffset(), numEvents+1)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -181,14 +211,27 @@ func ImplementationTest(
 		// to be returned when trying to append with an outdated offset
 		"TestAppendVersionMismatch": func(t *testing.T, l eventlog.EventLog) {
 			// Append first event
-			require.NoError(t, l.AppendCheck(0, PayloadJSON(t, Payload{"index": "0"})))
+			_, version, _, err := l.Append(PayloadJSON(t, Payload{"index": "0"}))
+			require.NoError(t, err)
+			require.Greater(t, version, uint64(0))
 
-			// Try to append second event on reserved offset
-			err := l.AppendCheck(0, PayloadJSON(t, Payload{"index": "1"}))
+			// Try to append second event on an invalid version offset
+			offset, newVersion, tm, err := l.AppendCheck(
+				version+1, // Mismatching version
+				PayloadJSON(t, Payload{"index": "1"}),
+			)
 			require.Error(t, err)
-			require.True(t, errors.Is(err, eventlog.ErrMismatchingVersions))
+			require.True(
+				t,
+				errors.Is(err, eventlog.ErrMismatchingVersions),
+				"unexpected error: %s",
+				err,
+			)
+			require.Zero(t, newVersion)
+			require.Zero(t, offset)
+			require.Zero(t, tm)
 
-			events, err := scan(l, 0, 0)
+			events, err := scan(l, l.FirstOffset(), 0)
 			require.NoError(t, err)
 
 			check(t, events, expected{
@@ -199,9 +242,14 @@ func ImplementationTest(
 		// TestReadEmptyLog assumes an ErrOffsetOutOfBound error
 		// to be returned when reading at offset 0 on an empty event log
 		"TestReadEmptyLog": func(t *testing.T, l eventlog.EventLog) {
-			events, err := scan(l, 0, 0)
+			events, err := scan(l, l.FirstOffset(), 0)
 			require.Error(t, err)
-			require.True(t, errors.Is(err, eventlog.ErrOffsetOutOfBound))
+			require.True(
+				t,
+				errors.Is(err, eventlog.ErrOffsetOutOfBound),
+				"unexpected error: %s",
+				err,
+			)
 
 			require.Len(t, events, 0)
 		},
@@ -211,11 +259,19 @@ func ImplementationTest(
 		// that's >= the length of the log
 		"TestReadOffsetOutOfBound": func(t *testing.T, l eventlog.EventLog) {
 			// Append first event
-			require.NoError(t, l.AppendCheck(0, PayloadJSON(t, Payload{"index": "0"})))
+			_, newVersion, _, err := l.Append(
+				PayloadJSON(t, Payload{"index": "0"}),
+			)
+			require.NoError(t, err)
 
-			events, err := scan(l, 1, 0)
+			events, err := scan(l, newVersion, 0)
 			require.Error(t, err)
-			require.True(t, errors.Is(err, eventlog.ErrOffsetOutOfBound))
+			require.True(
+				t,
+				errors.Is(err, eventlog.ErrOffsetOutOfBound),
+				"unexpected error: %s",
+				err,
+			)
 
 			check(t, events, expected{})
 		},
@@ -224,20 +280,31 @@ func ImplementationTest(
 		// to be returned when reading with an offset
 		// that's >= the length of the log
 		"TestAppendInvalidPayload": func(t *testing.T, l eventlog.EventLog) {
-			for input, successExpectation := range consts.JSONValidationTest() {
-				t.Run(fmt.Sprintf("%t_%s", successExpectation, input), func(t *testing.T) {
-					// Append first event
-					err := l.Append([]byte(input))
-					if successExpectation {
+			for input, successExpect := range consts.JSONValidationTest() {
+				t.Run(fmt.Sprintf(
+					"%t_%s",
+					successExpect,
+					input,
+				), func(t *testing.T) {
+					offset, version, tm, err := l.Append([]byte(input))
+					if successExpect {
 						require.NoError(t, err)
+						require.Greater(t, version, uint64(0))
+						require.WithinDuration(t, time.Now(), tm, timeTolerance)
 					} else {
 						require.Error(t, err)
-						require.True(t, errors.Is(err, eventlog.ErrInvalidPayload))
+						require.True(
+							t,
+							errors.Is(err, eventlog.ErrInvalidPayload),
+							"unexpected error: %s",
+							err,
+						)
+						require.Zero(t, offset)
+						require.Zero(t, version)
+						require.Zero(t, tm)
 					}
 				})
 			}
-
-			require.Equal(t, uint64(2), l.Version())
 		},
 	} {
 		t.Run(tname, func(t *testing.T) {

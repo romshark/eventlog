@@ -1,12 +1,17 @@
 package http
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
 
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/internal/bufpool"
+	"github.com/romshark/eventlog/internal/consts"
 
 	"github.com/valyala/fasthttp"
 )
@@ -25,6 +30,7 @@ var (
 type APIHTTP struct {
 	eventLog eventlog.EventLog
 	server   *fasthttp.Server
+	bufPool  *bufpool.Pool
 }
 
 // NewAPIHTTP returns a new HTTP API
@@ -34,6 +40,7 @@ func NewAPIHTTP(eventLog eventlog.EventLog) *APIHTTP {
 	}
 	api := &APIHTTP{
 		eventLog: eventLog,
+		bufPool:  bufpool.NewPool(64),
 	}
 	api.server = &fasthttp.Server{
 		Handler: api.handle,
@@ -67,17 +74,25 @@ func (api *APIHTTP) Shutdown() error {
 
 // parseOffset parses the ":offset" variable from the given request context
 // returning false if the request processing shouldn't be continued
-func parseOffset(ctx *fasthttp.RequestCtx, s string) (uint64, bool) {
-	offset, err := strconv.ParseUint(s, 10, 64)
+func parseOffset(
+	ctx *fasthttp.RequestCtx,
+	buffer *bufpool.Buffer,
+	s []byte,
+) (uint64, bool) {
+	buffer.Reset()
+	buf := buffer.Bytes()[:8]
+
+	_, err := base64.NewDecoder(
+		base64.RawURLEncoding,
+		bytes.NewBuffer(s),
+	).Read(buf)
 	if err != nil {
-		// Invalid offset
-		ctx.Error(
-			"invalid offset",
-			fasthttp.StatusBadRequest,
-		)
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody(consts.StatusMsgErrOffsetOutOfBound)
 		return 0, false
 	}
-	return offset, true
+
+	return binary.LittleEndian.Uint64(buf), true
 }
 
 // parseQueryN parses the "n" query parameter from the given request context

@@ -1,9 +1,14 @@
 package http_test
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +21,8 @@ import (
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
 )
+
+const timeTolerance = 1 * time.Second
 
 type (
 	expected []map[string]interface{}
@@ -92,16 +99,27 @@ func TestAppendRead(t *testing.T) {
 	defer teardown()
 
 	// Append first event
-	require.NoError(t, s.Client.Append(Payload{"ix": 1}))
+	offset1, newVersion1, tm1, err := s.Client.Append(Payload{"ix": 1})
+	require.NoError(t, err)
+	base64Greater(t, newVersion1, offset1)
+	require.WithinDuration(t, time.Now(), tm1, timeTolerance)
 
 	// Append second event
-	require.NoError(t, s.Client.Append(Payload{"ix": 2}))
+	offset2, newVersion2, tm2, err := s.Client.Append(Payload{"ix": 2})
+	require.NoError(t, err)
+	base64Greater(t, offset2, offset1)
+	base64Greater(t, newVersion2, offset2)
+	require.GreaterOrEqual(t, tm2.Unix(), tm1.Unix())
 
 	// Append third event
-	require.NoError(t, s.Client.Append(Payload{"ix": 3}))
+	offset3, newVersion3, tm3, err := s.Client.Append(Payload{"ix": 3})
+	require.NoError(t, err)
+	base64Greater(t, offset3, offset2)
+	base64Greater(t, newVersion3, offset3)
+	require.GreaterOrEqual(t, tm3.Unix(), tm2.Unix())
 
 	// Read all events
-	events, err := s.Client.Read(0, 0)
+	events, err := s.Client.Read(offset1, 0)
 	require.NoError(t, err)
 
 	check(t, events, expected{
@@ -118,13 +136,14 @@ func TestAppendReadUTF8(t *testing.T) {
 	defer teardown()
 
 	// Append first event
-	require.NoError(t, s.Client.Append(Payload{
+	offset, _, _, err := s.Client.Append(Payload{
 		"ключ":     "значение",
 		"გასაღები": "მნიშვნელობა",
-	}))
+	})
+	require.NoError(t, err)
 
 	// Read event
-	events, err := s.Client.Read(0, 0)
+	events, err := s.Client.Read(offset, 0)
 	require.NoError(t, err)
 
 	check(t, events, expected{
@@ -141,16 +160,21 @@ func TestReadN(t *testing.T) {
 	defer teardown()
 
 	const numEvents = 10
+	var firstOffset string
+
+	offsets := make([]string, 0, numEvents)
 
 	for i := 0; i < numEvents; i++ {
-		require.NoError(
-			t,
-			s.Client.Append(Payload{"index": i}),
-		)
+		offset, _, _, err := s.Client.Append(Payload{"index": i})
+		if i == 0 {
+			firstOffset = offset
+		}
+		require.NoError(t, err)
+		offsets = append(offsets, offset)
 	}
 
 	// Read the first half of events
-	events, err := s.Client.Read(0, 5)
+	events, err := s.Client.Read(firstOffset, 5)
 	require.NoError(t, err)
 
 	check(t, events, expected{
@@ -162,7 +186,7 @@ func TestReadN(t *testing.T) {
 	})
 
 	// Read the second half of events
-	events, err = s.Client.Read(5, 5)
+	events, err = s.Client.Read(offsets[5], 5)
 	require.NoError(t, err)
 
 	check(t, events, expected{
@@ -181,14 +205,26 @@ func TestAppendVersionMismatch(t *testing.T) {
 	defer teardown()
 
 	// Append first event
-	require.NoError(t, s.Client.AppendCheck(0, Payload{"index": "0"}))
+	offsetFirst, _, _, err := s.Client.Append(Payload{"index": "0"})
+	require.NoError(t, err)
 
-	// Try to append second event on reserved offset
-	err := s.Client.AppendCheck(0, Payload{"index": "1"})
+	// Try to append second event on an outdated/invalid version
+	offset, newVersion, tm, err := s.Client.AppendCheck(
+		offsetFirst,
+		Payload{"index": "1"},
+	)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, clt.ErrMismatchingVersions))
+	require.True(
+		t,
+		errors.Is(err, clt.ErrMismatchingVersions),
+		"unexpected error: %s",
+		err,
+	)
+	require.Zero(t, offset)
+	require.Zero(t, newVersion)
+	require.Zero(t, tm)
 
-	events, err := s.Client.Read(0, 0)
+	events, err := s.Client.Read(offsetFirst, 0)
 	require.NoError(t, err)
 
 	check(t, events, expected{
@@ -202,9 +238,14 @@ func TestReadEmptyLog(t *testing.T) {
 	s, teardown := NewSetup(t)
 	defer teardown()
 
-	events, err := s.Client.Read(0, 0)
+	events, err := s.Client.Read(uint64ZeroBase64, 0)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, clt.ErrOffsetOutOfBound))
+	require.True(
+		t,
+		errors.Is(err, clt.ErrOffsetOutOfBound),
+		"unexpected error: %s",
+		err,
+	)
 
 	require.Len(t, events, 0)
 }
@@ -217,11 +258,19 @@ func TestReadOffsetOutOfBound(t *testing.T) {
 	defer teardown()
 
 	// Append first event
-	require.NoError(t, s.Client.Append(Payload{"index": "0"}))
+	offsetFirst, _, _, err := s.Client.Append(Payload{"index": "0"})
+	require.NoError(t, err)
 
-	events, err := s.Client.Read(1, 0)
+	offsetDisplaced := incUi64Base64(t, offsetFirst, 1)
+
+	events, err := s.Client.Read(offsetDisplaced, 0)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, clt.ErrOffsetOutOfBound))
+	require.True(
+		t,
+		errors.Is(err, clt.ErrOffsetOutOfBound),
+		"unexpected error: %s",
+		err,
+	)
 
 	check(t, events, expected{})
 }
@@ -230,19 +279,65 @@ func TestReadOffsetOutOfBound(t *testing.T) {
 // to be returned when reading with an offset
 // that's >= the length of the log
 func TestAppendInvalidPayload(t *testing.T) {
-	for input, successExpectation := range consts.JSONValidationTest() {
-		t.Run(fmt.Sprintf("%t_%s", successExpectation, input), func(t *testing.T) {
+	for input, expSuccess := range consts.JSONValidationTest() {
+		if expSuccess {
+			continue
+		}
+		t.Run(fmt.Sprintf("%t_%s", expSuccess, input), func(t *testing.T) {
 			s, teardown := NewSetup(t)
 			defer teardown()
 
-			// Append first event
-			require.NoError(t, s.Client.Append(Payload{"index": "0"}))
+			// Try to append an event
+			offset, newVersion, tm, err := s.Client.AppendBytes([]byte(input))
 
-			events, err := s.Client.Read(1, 0)
 			require.Error(t, err)
-			require.True(t, errors.Is(err, clt.ErrOffsetOutOfBound))
+			require.True(
+				t,
+				errors.Is(err, clt.ErrInvalidPayload),
+				"unexpected error: %s (%s)",
+				err,
+			)
+			require.Zero(t, offset)
+			require.Zero(t, newVersion)
+			require.Zero(t, tm)
 
+			events, err := s.Client.Read(offset, 0)
+			require.Error(t, err)
 			check(t, events, expected{})
+
 		})
 	}
+}
+
+const uint64ZeroBase64 = "AAAAAAAAAAA"
+
+func dec(t *testing.T, s string) uint64 {
+	b := make([]byte, 8)
+	d := base64.NewDecoder(base64.RawURLEncoding, strings.NewReader(s))
+	_, err := io.ReadFull(d, b)
+	require.NoError(t, err)
+	return binary.LittleEndian.Uint64(b)
+}
+
+func base64Greater(t *testing.T, a, b string) {
+	ia := dec(t, a)
+	ib := dec(t, b)
+	require.True(
+		t,
+		ia > ib,
+		"a (%q = %d) isn't greater b (%q = %d)",
+		a,
+		ia,
+		b,
+		ib,
+	)
+}
+
+func incUi64Base64(t *testing.T, orig string, delta uint64) string {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, dec(t, orig)+delta)
+	w := new(bytes.Buffer)
+	_, err := base64.NewEncoder(base64.RawURLEncoding, w).Write(b)
+	require.NoError(t, err)
+	return w.String()
 }

@@ -11,7 +11,7 @@ import (
 
 // handleAppend handles POST /log/:offset
 func (api *APIHTTP) handleAppend(ctx *fasthttp.RequestCtx) error {
-	err := api.eventLog.Append(ctx.PostBody())
+	offset, newVersion, tm, err := api.eventLog.Append(ctx.PostBody())
 	switch {
 	case errors.Is(err, eventlog.ErrMismatchingVersions):
 		ctx.SetBody(consts.StatusMsgErrMismatchingVersions)
@@ -25,5 +25,8 @@ func (api *APIHTTP) handleAppend(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	return nil
+	buf := api.bufPool.Get()
+	defer buf.Release()
+
+	return writeAppendResponse(ctx, buf, offset, newVersion, tm)
 }

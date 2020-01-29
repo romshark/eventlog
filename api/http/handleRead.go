@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 var (
 	partH1         = []byte(`{"data":[`)
 	partE1         = []byte(`{"time":"`)
-	partE2         = []byte(`","payload":`)
+	partE2         = []byte(`","offset":"`)
+	partE3         = []byte(`","payload":`)
 	partT1         = []byte(`],"len":`)
 	partCloseBlock = []byte(`}`)
 	partSeparator  = []byte(`,`)
@@ -22,7 +24,10 @@ var (
 
 // handleRead handles GET /log/:offset
 func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
-	offset, ok := parseOffset(ctx, string(ctx.Path()[len(uriLog):]))
+	buf := api.bufPool.Get()
+	defer buf.Release()
+
+	offset, ok := parseOffset(ctx, buf, ctx.Path()[len(uriLog):])
 	if !ok {
 		return nil
 	}
@@ -39,7 +44,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 	err := api.eventLog.Scan(
 		offset,
 		n,
-		func(timestamp uint64, payload []byte) bool {
+		func(timestamp uint64, payload []byte, offset uint64) error {
 			if !firstCall {
 				_, _ = ctx.Write(partSeparator)
 			}
@@ -51,10 +56,15 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 				time.Unix(int64(timestamp), 0).Format(time.RFC3339),
 			)
 			_, _ = ctx.Write(partE2)
+			if err := writeBase64Uint64(offset, buf, ctx); err != nil {
+				return fmt.Errorf("encoding newVersion base64: %w", err)
+			}
+
+			_, _ = ctx.Write(partE3)
 			_, _ = ctx.Write(payload)
 			_, _ = ctx.Write(partCloseBlock)
 
-			return true
+			return nil
 		},
 	)
 

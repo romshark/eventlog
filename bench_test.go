@@ -71,7 +71,8 @@ func BenchmarkFileHTTP_Append_P128(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		panicOnErr(clt.AppendBytes(payload))
+		_, _, _, err := clt.AppendBytes(payload)
+		panicOnErr(err)
 	}
 }
 
@@ -87,8 +88,12 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 		"fazz": "4ff21935-b005-4bd3-936e-10d4692a8843"
 	}`)
 
+	_, newVersion, _, err := clt.AppendBytes(payload)
+	panicOnErr(err)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		panicOnErr(clt.AppendCheckBytes(uint64(i), payload))
+		_, newVersion, _, err = clt.AppendCheckBytes(newVersion, payload)
+		panicOnErr(err)
 	}
 }

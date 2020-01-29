@@ -1,7 +1,6 @@
 package client
 
 import (
-	"errors"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
@@ -15,11 +14,12 @@ var (
 	ErrMismatchingVersions = eventlog.ErrMismatchingVersions
 
 	// ErrInvalidPayload indicates an invalid payload
-	ErrInvalidPayload = errors.New("invalid payload")
+	ErrInvalidPayload = eventlog.ErrInvalidPayload
 )
 
 // Event represents a logged event
 type Event struct {
+	Offset  string                 `json:"offset"`
 	Time    time.Time              `json:"time"`
 	Payload map[string]interface{} `json:"payload"`
 }
@@ -28,24 +28,44 @@ type Event struct {
 type Client interface {
 	Append(
 		payload map[string]interface{},
-	) error
+	) (
+		offset string,
+		newVersion string,
+		tm time.Time,
+		err error,
+	)
 
 	AppendBytes(
 		payload []byte,
-	) error
+	) (
+		offset string,
+		newVersion string,
+		tm time.Time,
+		err error,
+	)
 
 	AppendCheck(
-		offset uint64,
+		assumedVersion string,
 		payload map[string]interface{},
-	) error
+	) (
+		offset string,
+		newVersion string,
+		tm time.Time,
+		err error,
+	)
 
 	AppendCheckBytes(
-		offset uint64,
+		assumedVersion string,
 		payload []byte,
-	) error
+	) (
+		offset string,
+		newVersion string,
+		tm time.Time,
+		err error,
+	)
 
 	Read(
-		offset uint64,
+		offset string,
 		n uint64,
 	) ([]Event, error)
 }

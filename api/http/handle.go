@@ -29,7 +29,7 @@ func (api *APIHTTP) handle(ctx *fasthttp.RequestCtx) {
 			handle = api.handleAppend
 		case len(p) > len(uriLog) &&
 			bytes.HasPrefix(p, uriLog):
-			// POST /log/:offset
+			// POST /log/:assumedVersion
 			handle = api.handleAppendCheck
 		}
 	default:

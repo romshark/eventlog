@@ -44,13 +44,16 @@ func (l *Inmem) Version() uint64 {
 	return uint64(v)
 }
 
+// FirstOffset implements EventLog.FirstOffset
+func (l *Inmem) FirstOffset() uint64 { return 0 }
+
 // Scan reads a maximum of n events starting at the given offset.
 // If offset+n exceeds the length of the log then a smaller number
 // of events is returned. Of n is 0 then all events starting at the
 // given offset are returned
 func (l *Inmem) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
-	defer l.lock.RUnlock()
 	l.lock.RLock()
+	defer l.lock.RUnlock()
 
 	ln := uint64(len(l.store))
 
@@ -70,47 +73,69 @@ func (l *Inmem) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
 	}
 
 	for _, e := range events {
-		fn(e.Timestamp, e.Payload)
+		if err := fn(e.Timestamp, e.Payload, offset); err != nil {
+			return err
+		}
+		offset++
 	}
 	return nil
 }
 
 // Append appends a new entry onto the event log
-func (l *Inmem) Append(payload []byte) error {
-	if err := eventlog.VerifyPayload(payload); err != nil {
-		return err
+func (l *Inmem) Append(payload []byte) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	if err = eventlog.VerifyPayload(payload); err != nil {
+		return
 	}
 
 	ev := newInmemEvent(payload)
 
-	defer l.lock.Unlock()
 	l.lock.Lock()
+	defer l.lock.Unlock()
 
 	l.store = append(l.store, ev)
+	ln := uint64(len(l.store))
 
-	return nil
+	tm = time.Unix(int64(ev.Timestamp), 0)
+	offset = ln - 1
+	newVersion = ln
+	return
 }
 
 // AppendCheck appends a new entry onto the event log
 // expecting offset to be the offset of the last entry plus 1
 func (l *Inmem) AppendCheck(
-	offset uint64,
+	assumedVersion uint64,
 	payload []byte,
-) error {
-	if err := eventlog.VerifyPayload(payload); err != nil {
-		return err
+) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	if err = eventlog.VerifyPayload(payload); err != nil {
+		return
 	}
 
 	ev := newInmemEvent(payload)
 
-	defer l.lock.Unlock()
 	l.lock.Lock()
+	defer l.lock.Unlock()
 
-	if offset != uint64(len(l.store)) {
-		return eventlog.ErrMismatchingVersions
+	if assumedVersion != uint64(len(l.store)) {
+		err = eventlog.ErrMismatchingVersions
+		return
 	}
 
 	l.store = append(l.store, ev)
+	ln := uint64(len(l.store))
 
-	return nil
+	tm = time.Unix(int64(ev.Timestamp), 0)
+	offset = ln - 1
+	newVersion = ln
+	return
 }

@@ -2,27 +2,44 @@ package eventlog
 
 import (
 	"errors"
+	"time"
 
 	"github.com/valyala/fastjson"
 )
 
 // ScanFn is called by EventLog.Scan for each scanned event
-type ScanFn func(timestamp uint64, payload []byte) bool
+type ScanFn func(timestamp uint64, payload []byte, offset uint64) error
 
 // EventLog represents an event log
 type EventLog interface {
 	// Version returns the current version of the log
 	Version() uint64
 
+	// FirstOffset returns the offset of the first entry in the log
+	FirstOffset() uint64
+
 	// Append appends an event with the given payload to the log
-	Append(payload []byte) error
+	Append(payload []byte) (
+		offset uint64,
+		newVersion uint64,
+		tm time.Time,
+		err error,
+	)
 
 	// AppendCheck appends an event with the given payload
 	// only if the offset matches the offset of the last
 	// entry in the log minus 1. If the offset doesn't match
 	// the log's version it will be rejected and ErrMismatchingVersions
 	// is returned instead
-	AppendCheck(offset uint64, payload []byte) error
+	AppendCheck(
+		assumedVersion uint64,
+		payload []byte,
+	) (
+		offset uint64,
+		newVersion uint64,
+		tm time.Time,
+		err error,
+	)
 
 	// Scan reads n events at the given offset
 	// calling the given callback function for each read entry.

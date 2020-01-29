@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	eventlog "github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/internal/const"
+	"github.com/romshark/eventlog/internal/consts"
 
 	"github.com/stretchr/testify/require"
 )

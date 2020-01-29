@@ -9,14 +9,20 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// handleAppendCheck handles POST /log/:offset
+// handleAppendCheck handles POST /log/:assumedVersion
 func (api *APIHTTP) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
-	offset, ok := parseOffset(ctx, string(ctx.Path()[len(uriLog):]))
+	buf := api.bufPool.Get()
+	defer buf.Release()
+
+	assumedVersion, ok := parseOffset(ctx, buf, ctx.Path()[len(uriLog):])
 	if !ok {
 		return nil
 	}
 
-	err := api.eventLog.AppendCheck(offset, ctx.PostBody())
+	offset, newVersion, tm, err := api.eventLog.AppendCheck(
+		assumedVersion,
+		ctx.PostBody(),
+	)
 	switch {
 	case errors.Is(err, eventlog.ErrMismatchingVersions):
 		ctx.SetBody(consts.StatusMsgErrMismatchingVersions)
@@ -30,5 +36,5 @@ func (api *APIHTTP) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	return nil
+	return writeAppendResponse(ctx, buf, offset, newVersion, tm)
 }

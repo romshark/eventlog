@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
@@ -44,61 +45,91 @@ func NewHTTP(clt *fasthttp.Client, host string) *HTTP {
 }
 
 // Append implements Client.Append
-func (c *HTTP) Append(payload map[string]interface{}) error {
+func (c *HTTP) Append(payload map[string]interface{}) (
+	offset string,
+	newVersion string,
+	tm time.Time,
+	err error,
+) {
 	if len(payload) < 1 {
-		return ErrInvalidPayload
+		err = ErrInvalidPayload
+		return
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshaling event body: %w", err)
+		err = fmt.Errorf("marshaling event body: %w", err)
+		return
 	}
 
-	return c.appendBytes(false, 0, body, false)
+	return c.appendBytes(false, "", body, false)
 }
 
 // AppendCheck implements Client.AppendCheck
 func (c *HTTP) AppendCheck(
-	offset uint64,
+	assumedVersion string,
 	payload map[string]interface{},
-) error {
+) (
+	offset string,
+	newVersion string,
+	tm time.Time,
+	err error,
+) {
 	if len(payload) < 1 {
-		return ErrInvalidPayload
+		err = ErrInvalidPayload
+		return
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshaling event body: %w", err)
+		err = fmt.Errorf("marshaling event body: %w", err)
+		return
 	}
 
-	return c.appendBytes(true, offset, body, false)
+	return c.appendBytes(true, assumedVersion, body, false)
 }
 
 // AppendBytes implements Client.AppendCheck
-func (c *HTTP) AppendBytes(payload []byte) error {
-	return c.appendBytes(false, 0, payload, true)
+func (c *HTTP) AppendBytes(payload []byte) (
+	offset string,
+	newVersion string,
+	tm time.Time,
+	err error,
+) {
+	return c.appendBytes(false, "", payload, true)
 }
 
 // AppendCheckBytes implements Client.AppendCheck
 func (c *HTTP) AppendCheckBytes(
-	offset uint64,
+	assumedVersion string,
 	payload []byte,
-) error {
-	return c.appendBytes(true, offset, payload, true)
+) (
+	offset string,
+	newVersion string,
+	tm time.Time,
+	err error,
+) {
+	return c.appendBytes(true, assumedVersion, payload, true)
 }
 
 func (c *HTTP) appendBytes(
-	includeOffset bool,
-	offset uint64,
+	assumeVersion bool,
+	assumedVersion string,
 	payload []byte,
 	validateJSON bool,
-) error {
+) (
+	offset string,
+	newVersion string,
+	tm time.Time,
+	err error,
+) {
 	if len(payload) < 1 {
-		return ErrInvalidPayload
+		err = ErrInvalidPayload
+		return
 	}
 	if validateJSON {
-		if err := eventlog.VerifyPayload(payload); err != nil {
-			return err
+		if err = eventlog.VerifyPayload(payload); err != nil {
+			return
 		}
 	}
 
@@ -111,40 +142,55 @@ func (c *HTTP) appendBytes(
 	req.SetHost(c.host)
 	req.Header.SetMethod(methodPost)
 
-	if includeOffset {
-		req.URI().SetPath(pathLog + strconv.FormatUint(offset, 10))
+	if assumeVersion {
+		req.URI().SetPath(pathLog + assumedVersion)
 	} else {
 		req.URI().SetPath(pathLog)
 	}
 
 	req.SetBody(payload)
 
-	if err := c.clt.Do(req, resp); err != nil {
-		return fmt.Errorf("http request: %w", err)
+	if err = c.clt.Do(req, resp); err != nil {
+		err = fmt.Errorf("http request: %w", err)
+		return
 	}
 
 	if resp.StatusCode() == fasthttp.StatusBadRequest {
 		switch {
 		case bytes.Equal(resp.Body(), consts.StatusMsgErrMismatchingVersions):
-			return ErrMismatchingVersions
+			err = ErrMismatchingVersions
+			return
 		case bytes.Equal(resp.Body(), consts.StatusMsgErrInvalidPayload):
-			return ErrInvalidPayload
+			err = ErrInvalidPayload
+			return
 		}
-		return fmt.Errorf(
+		err = fmt.Errorf(
 			"unexpected client-side error: (%d) %s",
 			resp.StatusCode(),
 			string(resp.Body()),
 		)
+		return
 	} else if resp.StatusCode() != fasthttp.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+		err = fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+		return
 	}
 
-	return nil
+	var re struct {
+		Offset     string    `json:"offset"`
+		NewVersion string    `json:"newVersion"`
+		Time       time.Time `json:"time"`
+	}
+	if err = json.Unmarshal(resp.Body(), &re); err != nil {
+		err = fmt.Errorf("unmarshalling response: %w", err)
+		return
+	}
+
+	return re.Offset, re.NewVersion, re.Time, nil
 }
 
 // Read implements Client.Read
 func (c *HTTP) Read(
-	offset uint64,
+	offset string,
 	n uint64,
 ) ([]Event, error) {
 	req := fasthttp.AcquireRequest()
@@ -155,7 +201,7 @@ func (c *HTTP) Read(
 
 	req.SetHost(c.host)
 	req.Header.SetMethod(methodGet)
-	req.URI().SetPath(pathLog + strconv.FormatUint(offset, 10))
+	req.URI().SetPath(pathLog + offset)
 
 	args := req.URI().QueryArgs()
 	if n > 0 {
