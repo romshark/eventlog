@@ -82,6 +82,7 @@ func TestRead(t *testing.T) {
 		out uint64
 	}{
 		{"0", 0},
+		{"0000", 0},
 		{"2", 2},
 		{"a", 10},
 		{"f", 15},
@@ -96,6 +97,23 @@ func TestRead(t *testing.T) {
 			n, err := hex.ReadUint64([]byte(tt.in))
 			require.NoError(t, err)
 			require.Equal(t, tt.out, n)
+		})
+	}
+}
+
+func TestReadErr(t *testing.T) {
+	for _, tt := range []struct {
+		tname string
+		in    string
+	}{
+		{"empty", ""},
+		{"overflow", "ffffffffffffffffa"},
+		{"syntax", "abcdefg"},
+	} {
+		t.Run(tt.tname, func(t *testing.T) {
+			n, err := hex.ReadUint64([]byte(tt.in))
+			require.Error(t, err)
+			require.Zero(t, n)
 		})
 	}
 }
