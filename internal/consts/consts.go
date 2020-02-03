@@ -7,6 +7,7 @@ var (
 	StatusMsgErrInvalidTypeName     = []byte("ErrInvalidTypeName")
 	StatusMsgErrMismatchingVersions = []byte("ErrMismatchingVersions")
 	StatusMsgErrInvalidOffset       = []byte("ErrInvalidOffset")
+	StatusMsgErrInvalidVersion      = []byte("ErrInvalidVersion")
 )
 
 // JSONValidationTest returns the JSON validation test setup

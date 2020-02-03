@@ -1,9 +1,6 @@
 package http
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -11,7 +8,6 @@ import (
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/bufpool"
-	"github.com/romshark/eventlog/internal/consts"
 
 	"github.com/valyala/fasthttp"
 )
@@ -70,29 +66,6 @@ func (api *APIHTTP) ListenAndServe(addr string) error {
 // without interrupting any active connections
 func (api *APIHTTP) Shutdown() error {
 	return api.server.Shutdown()
-}
-
-// parseOffset parses the ":offset" variable from the given request context
-// returning false if the request processing shouldn't be continued
-func parseOffset(
-	ctx *fasthttp.RequestCtx,
-	buffer *bufpool.Buffer,
-	s []byte,
-) (uint64, bool) {
-	buffer.Reset()
-	buf := buffer.Bytes()[:8]
-
-	_, err := base64.NewDecoder(
-		base64.RawURLEncoding,
-		bytes.NewBuffer(s),
-	).Read(buf)
-	if err != nil {
-		ctx.SetStatusCode(fasthttp.StatusBadRequest)
-		ctx.SetBody(consts.StatusMsgErrOffsetOutOfBound)
-		return 0, false
-	}
-
-	return binary.LittleEndian.Uint64(buf), true
 }
 
 // parseQueryN parses the "n" query parameter from the given request context

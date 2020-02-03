@@ -1,14 +1,10 @@
 package http_test
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
@@ -101,21 +97,21 @@ func TestAppendRead(t *testing.T) {
 	// Append first event
 	offset1, newVersion1, tm1, err := s.Client.Append(Payload{"ix": 1})
 	require.NoError(t, err)
-	base64Greater(t, newVersion1, offset1)
+	hexGreater(t, newVersion1, offset1)
 	require.WithinDuration(t, time.Now(), tm1, timeTolerance)
 
 	// Append second event
 	offset2, newVersion2, tm2, err := s.Client.Append(Payload{"ix": 2})
 	require.NoError(t, err)
-	base64Greater(t, offset2, offset1)
-	base64Greater(t, newVersion2, offset2)
+	hexGreater(t, offset2, offset1)
+	hexGreater(t, newVersion2, offset2)
 	require.GreaterOrEqual(t, tm2.Unix(), tm1.Unix())
 
 	// Append third event
 	offset3, newVersion3, tm3, err := s.Client.Append(Payload{"ix": 3})
 	require.NoError(t, err)
-	base64Greater(t, offset3, offset2)
-	base64Greater(t, newVersion3, offset3)
+	hexGreater(t, offset3, offset2)
+	hexGreater(t, newVersion3, offset3)
 	require.GreaterOrEqual(t, tm3.Unix(), tm2.Unix())
 
 	// Read all events
@@ -238,7 +234,7 @@ func TestReadEmptyLog(t *testing.T) {
 	s, teardown := NewSetup(t)
 	defer teardown()
 
-	events, err := s.Client.Read(uint64ZeroBase64, 0)
+	events, err := s.Client.Read("0", 0)
 	require.Error(t, err)
 	require.True(
 		t,
@@ -261,7 +257,7 @@ func TestReadOffsetOutOfBound(t *testing.T) {
 	offsetFirst, _, _, err := s.Client.Append(Payload{"index": "0"})
 	require.NoError(t, err)
 
-	offsetDisplaced := incUi64Base64(t, offsetFirst, 1)
+	offsetDisplaced := incUi64Hex(t, offsetFirst, 1)
 
 	events, err := s.Client.Read(offsetDisplaced, 0)
 	require.Error(t, err)
@@ -309,35 +305,22 @@ func TestAppendInvalidPayload(t *testing.T) {
 	}
 }
 
-const uint64ZeroBase64 = "AAAAAAAAAAA"
-
-func dec(t *testing.T, s string) uint64 {
-	b := make([]byte, 8)
-	d := base64.NewDecoder(base64.RawURLEncoding, strings.NewReader(s))
-	_, err := io.ReadFull(d, b)
+func decHex(t *testing.T, s string) uint64 {
+	n, err := strconv.ParseUint(s, 16, 64)
 	require.NoError(t, err)
-	return binary.LittleEndian.Uint64(b)
+	return n
 }
 
-func base64Greater(t *testing.T, a, b string) {
-	ia := dec(t, a)
-	ib := dec(t, b)
-	require.True(
-		t,
-		ia > ib,
+func hexGreater(t *testing.T, a, b string) {
+	ia := decHex(t, a)
+	ib := decHex(t, b)
+	require.Greater(
+		t, ia, ib,
 		"a (%q = %d) isn't greater b (%q = %d)",
-		a,
-		ia,
-		b,
-		ib,
+		a, ia, b, ib,
 	)
 }
 
-func incUi64Base64(t *testing.T, orig string, delta uint64) string {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, dec(t, orig)+delta)
-	w := new(bytes.Buffer)
-	_, err := base64.NewEncoder(base64.RawURLEncoding, w).Write(b)
-	require.NoError(t, err)
-	return w.String()
+func incUi64Hex(t *testing.T, orig string, delta uint64) string {
+	return fmt.Sprintf("%x", decHex(t, orig)+delta)
 }

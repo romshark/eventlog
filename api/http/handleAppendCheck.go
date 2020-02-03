@@ -5,6 +5,7 @@ import (
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
+	"github.com/romshark/eventlog/internal/hex"
 
 	"github.com/valyala/fasthttp"
 )
@@ -14,8 +15,10 @@ func (api *APIHTTP) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 	buf := api.bufPool.Get()
 	defer buf.Release()
 
-	assumedVersion, ok := parseOffset(ctx, buf, ctx.Path()[len(uriLog):])
-	if !ok {
+	assumedVersion, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody(consts.StatusMsgErrInvalidVersion)
 		return nil
 	}
 

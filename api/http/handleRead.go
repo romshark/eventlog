@@ -2,12 +2,12 @@ package http
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
 	eventlog "github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
+	"github.com/romshark/eventlog/internal/hex"
 
 	"github.com/valyala/fasthttp"
 )
@@ -27,8 +27,10 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 	buf := api.bufPool.Get()
 	defer buf.Release()
 
-	offset, ok := parseOffset(ctx, buf, ctx.Path()[len(uriLog):])
-	if !ok {
+	offset, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody(consts.StatusMsgErrInvalidOffset)
 		return nil
 	}
 
@@ -41,7 +43,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 
 	_, _ = ctx.Write(partH1)
 	firstCall := true
-	err := api.eventLog.Scan(
+	err = api.eventLog.Scan(
 		offset,
 		n,
 		func(timestamp uint64, payload []byte, offset uint64) error {
@@ -56,10 +58,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 				time.Unix(int64(timestamp), 0).Format(time.RFC3339),
 			)
 			_, _ = ctx.Write(partE2)
-			if err := writeBase64Uint64(offset, buf, ctx); err != nil {
-				return fmt.Errorf("encoding newVersion base64: %w", err)
-			}
-
+			_, _ = hex.WriteUint64(ctx, offset)
 			_, _ = ctx.Write(partE3)
 			_, _ = ctx.Write(payload)
 			_, _ = ctx.Write(partCloseBlock)
