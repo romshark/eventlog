@@ -17,6 +17,7 @@ const (
 	methodGet  = "GET"
 	methodPost = "POST"
 	pathLog    = "log/"
+	pathBegin  = "begin"
 	queryArgsN = "n"
 )
 
@@ -244,4 +245,38 @@ func (c *HTTP) Read(
 	}
 
 	return events.Data, nil
+}
+
+// Begin implements Client.Begin
+func (c *HTTP) Begin() (string, error) {
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.SetHost(c.host)
+	req.Header.SetMethod(methodGet)
+	req.URI().SetPath(pathBegin)
+
+	if err := c.clt.Do(req, resp); err != nil {
+		return "", fmt.Errorf("http request: %w", err)
+	}
+
+	if resp.StatusCode() != fasthttp.StatusOK {
+		return "", fmt.Errorf(
+			"unexpected status code: %d",
+			resp.StatusCode(),
+		)
+	}
+
+	b := resp.Body()
+	if len(b) < 14 {
+		return "", fmt.Errorf(
+			"unexpected response body: %s",
+			string(b),
+		)
+	}
+
+	return string(b[11 : len(b)-2]), nil
 }

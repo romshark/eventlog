@@ -97,3 +97,34 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 		panicOnErr(err)
 	}
 }
+
+func BenchmarkFileHTTP_Read_1K(b *testing.B) {
+	clt, teardown := newBenchmarkSetup(b)
+	defer teardown()
+
+	const numEvents = 1000
+
+	var offset string
+
+	for i := 0; i < numEvents; i++ {
+		o, _, _, err := clt.AppendBytes([]byte(`{
+			"example": "benchmark",
+			"foo": null,
+			"bar": 52.7775,
+			"baz": false,
+			"fazz": "4ff21935-b005-4bd3-936e-10d4692a8843"
+		}`))
+		panicOnErr(err)
+		if i < 1 {
+			offset = o
+		}
+	}
+
+	for i := 0; i < b.N; i++ {
+		events, err := clt.Read(offset, 0)
+		if len(events) != numEvents {
+			panic(fmt.Errorf("unexpected number of events: %d", len(events)))
+		}
+		panicOnErr(err)
+	}
+}

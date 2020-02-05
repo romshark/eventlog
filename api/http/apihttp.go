@@ -20,6 +20,7 @@ var (
 	methodGet  = []byte("GET")
 	methodPost = []byte("POST")
 	uriLog     = []byte("/log/")
+	uriBegin   = []byte("/begin")
 )
 
 // APIHTTP is an HTTP API instance

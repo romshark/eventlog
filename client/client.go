@@ -68,4 +68,6 @@ type Client interface {
 		offset string,
 		n uint64,
 	) ([]Event, error)
+
+	Begin() (string, error)
 }

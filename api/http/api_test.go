@@ -324,3 +324,21 @@ func hexGreater(t *testing.T, a, b string) {
 func incUi64Hex(t *testing.T, orig string, delta uint64) string {
 	return fmt.Sprintf("%x", decHex(t, orig)+delta)
 }
+
+// TestReadBegin assumes the correct offset to be returned for GET /begin
+func TestReadBegin(t *testing.T) {
+	s, teardown := NewSetup(t)
+	defer teardown()
+
+	firstOffset1, err := s.Client.Begin()
+	require.NoError(t, err)
+	require.NotZero(t, firstOffset1)
+
+	offset, _, _, err := s.Client.Append(Payload{"x": "y"})
+	require.NoError(t, err)
+	require.Equal(t, firstOffset1, offset)
+
+	firstOffset2, err := s.Client.Begin()
+	require.NoError(t, err)
+	require.Equal(t, firstOffset1, firstOffset2)
+}

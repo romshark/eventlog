@@ -21,6 +21,9 @@ func (api *APIHTTP) handle(ctx *fasthttp.RequestCtx) {
 			bytes.HasPrefix(p, uriLog):
 			// GET /log/:offset
 			handle = api.handleRead
+		case bytes.Equal(p, uriBegin):
+			// GET /begin
+			handle = api.handleBegin
 		}
 	case bytes.Equal(m, methodPost):
 		switch {
