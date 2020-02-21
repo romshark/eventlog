@@ -16,7 +16,7 @@ func Test(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			buf := new(bytes.Buffer)
-			itoa.U32toa(buf, i)
+			require.NoError(t, itoa.U32toa(buf, i))
 			require.Equal(t, fmt.Sprintf("%d", i), buf.String())
 		})
 	}
