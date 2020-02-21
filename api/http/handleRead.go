@@ -2,12 +2,12 @@ package http
 
 import (
 	"errors"
-	"strconv"
 	"time"
 
 	eventlog "github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
 	"github.com/romshark/eventlog/internal/hex"
+	"github.com/romshark/eventlog/internal/itoa"
 
 	"github.com/valyala/fasthttp"
 )
@@ -39,7 +39,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	counter := uint64(0)
+	counter := uint32(0)
 
 	_, _ = ctx.Write(partH1)
 	firstCall := true
@@ -78,7 +78,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 	}
 
 	_, _ = ctx.Write(partT1)
-	_, _ = ctx.WriteString(strconv.FormatUint(counter, 10))
+	_ = itoa.U32toa(ctx, counter)
 	_, _ = ctx.Write(partCloseBlock)
 
 	ctx.Response.SetStatusCode(fasthttp.StatusOK)
