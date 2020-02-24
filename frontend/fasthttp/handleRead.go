@@ -24,8 +24,7 @@ var (
 
 // handleRead handles GET /log/:offset
 func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
-	buf := s.bufPool.Get()
-	defer buf.Release()
+	buf := make([]byte, 0, 64)
 
 	offset, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
 	if err != nil {
@@ -54,9 +53,11 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 
 			counter++
 			_, _ = ctx.Write(partE1)
-			_, _ = ctx.WriteString(
-				time.Unix(int64(timestamp), 0).Format(time.RFC3339),
-			)
+
+			buf = time.Unix(int64(timestamp), 0).AppendFormat(buf, time.RFC3339)
+			_, _ = ctx.Write(buf)
+			buf = buf[:0]
+
 			_, _ = ctx.Write(partE2)
 			_, _ = hex.WriteUint64(ctx, offset)
 			_, _ = ctx.Write(partE3)

@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/internal/bufpool"
 
 	"github.com/valyala/fasthttp"
 )
@@ -24,7 +23,6 @@ var (
 // Server is an HTTP API instance
 type Server struct {
 	eventLog eventlog.EventLog
-	bufPool  *bufpool.Pool
 }
 
 // New returns a new HTTP API
@@ -34,7 +32,6 @@ func New(eventLog eventlog.EventLog) *Server {
 	}
 	return &Server{
 		eventLog: eventLog,
-		bufPool:  bufpool.NewPool(64),
 	}
 }
 

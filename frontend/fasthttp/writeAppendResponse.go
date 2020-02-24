@@ -3,7 +3,6 @@ package fasthttp
 import (
 	"time"
 
-	"github.com/romshark/eventlog/internal/bufpool"
 	"github.com/romshark/eventlog/internal/hex"
 	"github.com/valyala/fasthttp"
 )
@@ -17,11 +16,13 @@ var (
 
 func writeAppendResponse(
 	ctx *fasthttp.RequestCtx,
-	buf *bufpool.Buffer,
 	offset,
 	newVersion uint64,
 	tm time.Time,
 ) error {
+	b := make([]byte, 0, 64)
+	b = tm.AppendFormat(b, time.RFC3339)
+
 	_, _ = ctx.Write(handleAppendPart1)
 	// Write offset
 	_, _ = hex.WriteUint64(ctx, offset)
@@ -30,7 +31,7 @@ func writeAppendResponse(
 	_, _ = hex.WriteUint64(ctx, newVersion)
 	_, _ = ctx.Write(handleAppendPart3)
 	// Write time
-	_, _ = ctx.WriteString(tm.Format(time.RFC3339))
+	_, _ = ctx.Write(b)
 	_, _ = ctx.Write(handleAppendPart4)
 
 	return nil

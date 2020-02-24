@@ -25,8 +25,5 @@ func (s *Server) handleAppend(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	buf := s.bufPool.Get()
-	defer buf.Release()
-
-	return writeAppendResponse(ctx, buf, offset, newVersion, tm)
+	return writeAppendResponse(ctx, offset, newVersion, tm)
 }

@@ -12,9 +12,6 @@ import (
 
 // handleAppendCheck handles POST /log/:assumedVersion
 func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
-	buf := s.bufPool.Get()
-	defer buf.Release()
-
 	assumedVersion, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
@@ -39,5 +36,5 @@ func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	return writeAppendResponse(ctx, buf, offset, newVersion, tm)
+	return writeAppendResponse(ctx, offset, newVersion, tm)
 }
