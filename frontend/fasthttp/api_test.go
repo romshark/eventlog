@@ -1,4 +1,4 @@
-package http_test
+package fasthttp_test
 
 import (
 	"errors"
@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	apihttp "github.com/romshark/eventlog/api/http"
 	clt "github.com/romshark/eventlog/client"
-	engineinmem "github.com/romshark/eventlog/eventlog/inmem"
+	enginmem "github.com/romshark/eventlog/eventlog/inmem"
+	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
 	"github.com/romshark/eventlog/internal/consts"
 
 	"github.com/stretchr/testify/require"
@@ -49,32 +49,34 @@ func check(
 }
 
 type Setup struct {
-	HTTPAPI *apihttp.APIHTTP
-	Client  clt.Client
+	Client clt.Client
 }
 
 func NewSetup(t *testing.T) (
 	setup Setup,
 	teardown func(),
 ) {
-	l, err := engineinmem.NewInmem()
+	l, err := enginmem.NewInmem()
 	require.NoError(t, err)
 
-	ln := fasthttputil.NewInmemoryListener()
+	s := ffhttp.New(l)
+	require.NotNil(t, s)
 
-	setup.HTTPAPI = apihttp.NewAPIHTTP(l)
-	require.NotNil(t, setup.HTTPAPI)
+	ln := fasthttputil.NewInmemoryListener()
+	httpServer := &fasthttp.Server{
+		Handler:      s.Serve,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+	}
 
 	go func() {
-		if err := setup.HTTPAPI.Serve(ln); err != nil {
+		if err := httpServer.Serve(ln); err != nil {
 			panic(err)
 		}
 	}()
 
 	teardown = func() {
-		if err := ln.Close(); err != nil {
-			panic(err)
-		}
+		require.NoError(t, httpServer.Shutdown())
 	}
 
 	setup.Client = clt.NewHTTP(

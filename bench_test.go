@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	apihttp "github.com/romshark/eventlog/api/http"
 	"github.com/romshark/eventlog/client"
 	evfile "github.com/romshark/eventlog/eventlog/file"
+	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
 
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
@@ -33,15 +33,22 @@ func newBenchmarkSetup(b *testing.B) (clt client.Client, teardown func()) {
 
 	ln := fasthttputil.NewInmemoryListener()
 
-	api := apihttp.NewAPIHTTP(l)
+	server := ffhttp.New(l)
+	httpServer := &fasthttp.Server{
+		Handler:     server.Serve,
+		ReadTimeout: 10 * time.Millisecond,
+	}
+
 	go func() {
-		if err := api.Serve(ln); err != nil {
+		if err := httpServer.Serve(ln); err != nil {
 			panic(err)
 		}
 	}()
 
 	teardown = func() {
-		ln.Close()
+		if err := httpServer.Shutdown(); err != nil {
+			panic(err)
+		}
 		os.Remove(fileName)
 	}
 

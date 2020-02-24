@@ -1,17 +1,31 @@
-package http
+package fasthttp
 
 import (
 	"errors"
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
+	"github.com/romshark/eventlog/internal/hex"
 
 	"github.com/valyala/fasthttp"
 )
 
-// handleAppend handles POST /log/:offset
-func (api *APIHTTP) handleAppend(ctx *fasthttp.RequestCtx) error {
-	offset, newVersion, tm, err := api.eventLog.Append(ctx.PostBody())
+// handleAppendCheck handles POST /log/:assumedVersion
+func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
+	buf := s.bufPool.Get()
+	defer buf.Release()
+
+	assumedVersion, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody(consts.StatusMsgErrInvalidVersion)
+		return nil
+	}
+
+	offset, newVersion, tm, err := s.eventLog.AppendCheck(
+		assumedVersion,
+		ctx.PostBody(),
+	)
 	switch {
 	case errors.Is(err, eventlog.ErrMismatchingVersions):
 		ctx.SetBody(consts.StatusMsgErrMismatchingVersions)
@@ -24,9 +38,6 @@ func (api *APIHTTP) handleAppend(ctx *fasthttp.RequestCtx) error {
 	case err != nil:
 		return err
 	}
-
-	buf := api.bufPool.Get()
-	defer buf.Release()
 
 	return writeAppendResponse(ctx, buf, offset, newVersion, tm)
 }

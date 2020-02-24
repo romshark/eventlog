@@ -1,4 +1,4 @@
-package http
+package fasthttp
 
 import (
 	"github.com/romshark/eventlog/internal/hex"
@@ -10,8 +10,8 @@ var (
 	partBegin2 = []byte(`"}`)
 )
 
-func (api *APIHTTP) handleBegin(ctx *fasthttp.RequestCtx) error {
-	beginOffset := api.eventLog.FirstOffset()
+func (s *Server) handleBegin(ctx *fasthttp.RequestCtx) error {
+	beginOffset := s.eventLog.FirstOffset()
 	_, _ = ctx.Write(partBegin1)
 	_, _ = hex.WriteUint64(ctx, beginOffset)
 	_, _ = ctx.Write(partBegin2)

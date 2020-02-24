@@ -1,4 +1,4 @@
-package http
+package fasthttp
 
 import (
 	"errors"
@@ -23,8 +23,8 @@ var (
 )
 
 // handleRead handles GET /log/:offset
-func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
-	buf := api.bufPool.Get()
+func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
+	buf := s.bufPool.Get()
 	defer buf.Release()
 
 	offset, err := hex.ReadUint64(ctx.Path()[len(uriLog):])
@@ -43,7 +43,7 @@ func (api *APIHTTP) handleRead(ctx *fasthttp.RequestCtx) error {
 
 	_, _ = ctx.Write(partH1)
 	firstCall := true
-	err = api.eventLog.Scan(
+	err = s.eventLog.Scan(
 		offset,
 		n,
 		func(timestamp uint64, payload []byte, offset uint64) error {

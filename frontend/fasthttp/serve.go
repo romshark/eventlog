@@ -1,4 +1,4 @@
-package http
+package fasthttp
 
 import (
 	"bytes"
@@ -7,8 +7,8 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// handle handles incomming requests
-func (api *APIHTTP) handle(ctx *fasthttp.RequestCtx) {
+// Serve handles incomming requests from a fasthttp.Server
+func (s *Server) Serve(ctx *fasthttp.RequestCtx) {
 	m := ctx.Method()
 	p := ctx.Path()
 
@@ -20,20 +20,20 @@ func (api *APIHTTP) handle(ctx *fasthttp.RequestCtx) {
 		case len(p) > len(uriLog) &&
 			bytes.HasPrefix(p, uriLog):
 			// GET /log/:offset
-			handle = api.handleRead
+			handle = s.handleRead
 		case bytes.Equal(p, uriBegin):
 			// GET /begin
-			handle = api.handleBegin
+			handle = s.handleBegin
 		}
 	case bytes.Equal(m, methodPost):
 		switch {
 		case bytes.Equal(p, uriLog):
 			// POST /log/
-			handle = api.handleAppend
+			handle = s.handleAppend
 		case len(p) > len(uriLog) &&
 			bytes.HasPrefix(p, uriLog):
 			// POST /log/:assumedVersion
-			handle = api.handleAppendCheck
+			handle = s.handleAppendCheck
 		}
 	default:
 		ctx.Error(

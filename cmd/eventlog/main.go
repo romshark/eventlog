@@ -3,11 +3,15 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"os/signal"
 
-	apihttp "github.com/romshark/eventlog/api/http"
 	"github.com/romshark/eventlog/eventlog"
 	enginefile "github.com/romshark/eventlog/eventlog/file"
 	engineinmem "github.com/romshark/eventlog/eventlog/inmem"
+	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
+
+	"github.com/valyala/fasthttp"
 )
 
 const (
@@ -16,8 +20,8 @@ const (
 )
 
 var (
-	flatAPIHTTP = flag.String(
-		"httpapi",
+	flagAPIHTTP = flag.String(
+		"apihttp",
 		":8080",
 		"TCP address to listen to",
 	)
@@ -36,6 +40,7 @@ var (
 func main() {
 	flag.Parse()
 
+	// Initialize the event log engine
 	var l eventlog.EventLog
 	var err error
 	switch *flagStoreEngine {
@@ -54,8 +59,28 @@ func main() {
 		log.Fatalf("unsupported engine %q", *flagStoreEngine)
 	}
 
-	apiHTTP := apihttp.NewAPIHTTP(l)
-	if err := apiHTTP.ListenAndServe(*flatAPIHTTP); err != nil {
-		log.Fatal(err)
+	// Initialize the frontend
+	server := ffhttp.New(l)
+	httpServer := &fasthttp.Server{
+		Handler: server.Serve,
 	}
+
+	// Launch server
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	go func() {
+		log.Printf("listening on %s", *flagAPIHTTP)
+		if err := httpServer.ListenAndServe(*flagAPIHTTP); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	// Await stop
+	<-stop
+
+	log.Println("shutting down...")
+	if err := httpServer.Shutdown(); err != nil {
+		log.Fatalf("shutdown err: %s", err)
+	}
+	log.Println("shutdown")
 }
