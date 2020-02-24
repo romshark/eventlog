@@ -20,7 +20,7 @@ func newInmemEvent(payload []byte) inmemEvent {
 	copy(p, payload)
 
 	return inmemEvent{
-		Timestamp: uint64(time.Now().Unix()),
+		Timestamp: uint64(time.Now().UTC().Unix()),
 		Payload:   p,
 	}
 }

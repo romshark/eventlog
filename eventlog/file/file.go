@@ -328,7 +328,7 @@ func (f *File) Append(payload []byte) (
 		return
 	}
 
-	tm = time.Now()
+	tm = time.Now().UTC()
 	timestamp := uint64(tm.Unix())
 
 	buf := f.bufPool.Get()
@@ -357,7 +357,7 @@ func (f *File) AppendCheck(
 		return
 	}
 
-	tm = time.Now()
+	tm = time.Now().UTC()
 	timestamp := uint64(tm.Unix())
 
 	buf := f.bufPool.Get()
