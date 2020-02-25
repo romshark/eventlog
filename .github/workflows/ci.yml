@@ -19,7 +19,7 @@ jobs:
     # BUILD
 
     # Build cmd/eventlog
-    - name: Build
+    - name: Build cmd/eventlog
       env:
         GOPROXY: "https://proxy.golang.org"
       run: |
