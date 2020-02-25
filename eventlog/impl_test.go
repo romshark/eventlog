@@ -62,9 +62,9 @@ func ImplementationTest(
 		l eventlog.EventLog,
 		offset,
 		n uint64,
-	) ([]Event, error) {
+	) ([]Event, uint64, error) {
 		var events []Event
-		err := l.Scan(offset, n, func(
+		nextOffset, err := l.Scan(offset, n, func(
 			timestamp uint64,
 			payload []byte,
 			offset uint64,
@@ -82,7 +82,7 @@ func ImplementationTest(
 
 			return nil
 		})
-		return events, err
+		return events, nextOffset, err
 	}
 
 	for tname, test := range map[string]func(*testing.T, eventlog.EventLog){
@@ -116,8 +116,9 @@ func ImplementationTest(
 			require.GreaterOrEqual(t, tm3.Unix(), tm2.Unix())
 
 			// Read all events
-			events, err := scan(l, offset1, 0)
+			events, nextOffset, err := scan(l, offset1, 0)
 			require.NoError(t, err)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{
 				{"ix": float64(1)},
@@ -137,8 +138,9 @@ func ImplementationTest(
 			require.NoError(t, err)
 
 			// Read event
-			events, err := scan(l, newOffset, 0)
+			events, nextOffset, err := scan(l, newOffset, 0)
 			require.NoError(t, err)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{
 				{
@@ -160,8 +162,9 @@ func ImplementationTest(
 			}
 
 			// Read the first half of events
-			events, err := scan(l, l.FirstOffset(), 5)
+			events, nextOffset, err := scan(l, l.FirstOffset(), 5)
 			require.NoError(t, err)
+			require.Equal(t, offsets[5], nextOffset)
 
 			check(t, events, expected{
 				{"index": float64(0)},
@@ -171,9 +174,11 @@ func ImplementationTest(
 				{"index": float64(4)},
 			})
 
-			// Read the second half of events
-			events, err = scan(l, offsets[5], 5)
+			// Read the second half of events  using the offset
+			// of the next item from the previous scan
+			events, nextOffset, err = scan(l, nextOffset, 5)
 			require.NoError(t, err)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{
 				{"index": float64(5)},
@@ -195,8 +200,9 @@ func ImplementationTest(
 			}
 
 			// Read more events than there actually are
-			events, err := scan(l, l.FirstOffset(), numEvents+1)
+			events, nextOffset, err := scan(l, l.FirstOffset(), numEvents+1)
 			require.NoError(t, err)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{
 				{"index": float64(0)},
@@ -231,8 +237,9 @@ func ImplementationTest(
 			require.Zero(t, offset)
 			require.Zero(t, tm)
 
-			events, err := scan(l, l.FirstOffset(), 0)
+			events, nextOffset, err := scan(l, l.FirstOffset(), 0)
 			require.NoError(t, err)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{
 				{"index": "0"},
@@ -242,7 +249,7 @@ func ImplementationTest(
 		// TestReadEmptyLog assumes an ErrOffsetOutOfBound error
 		// to be returned when reading at offset 0 on an empty event log
 		"TestReadEmptyLog": func(t *testing.T, l eventlog.EventLog) {
-			events, err := scan(l, l.FirstOffset(), 0)
+			events, nextOffset, err := scan(l, l.FirstOffset(), 0)
 			require.Error(t, err)
 			require.True(
 				t,
@@ -250,6 +257,7 @@ func ImplementationTest(
 				"unexpected error: %s",
 				err,
 			)
+			require.Zero(t, nextOffset)
 
 			require.Len(t, events, 0)
 		},
@@ -264,7 +272,7 @@ func ImplementationTest(
 			)
 			require.NoError(t, err)
 
-			events, err := scan(l, newVersion, 0)
+			events, nextOffset, err := scan(l, newVersion, 0)
 			require.Error(t, err)
 			require.True(
 				t,
@@ -272,6 +280,7 @@ func ImplementationTest(
 				"unexpected error: %s",
 				err,
 			)
+			require.Zero(t, nextOffset)
 
 			check(t, events, expected{})
 		},

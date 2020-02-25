@@ -18,6 +18,8 @@ var (
 	partE2         = []byte(`","offset":"`)
 	partE3         = []byte(`","payload":`)
 	partT1         = []byte(`],"len":`)
+	partT2         = []byte(`,"next":"`)
+	partT3         = []byte(`"}`)
 	partCloseBlock = []byte(`}`)
 	partSeparator  = []byte(`,`)
 )
@@ -42,7 +44,7 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 
 	_, _ = ctx.Write(partH1)
 	firstCall := true
-	err = s.eventLog.Scan(
+	nextOffset, err := s.eventLog.Scan(
 		offset,
 		n,
 		func(timestamp uint64, payload []byte, offset uint64) error {
@@ -80,7 +82,14 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 
 	_, _ = ctx.Write(partT1)
 	_ = itoa.U32toa(ctx, counter)
-	_, _ = ctx.Write(partCloseBlock)
+
+	if nextOffset == 0 {
+		_, _ = ctx.Write(partCloseBlock)
+	} else {
+		_, _ = ctx.Write(partT2)
+		_, _ = hex.WriteUint64(ctx, nextOffset)
+		_, _ = ctx.Write(partT3)
+	}
 
 	ctx.Response.SetStatusCode(fasthttp.StatusOK)
 	ctx.Response.Header.SetContentType("application/json")

@@ -265,7 +265,14 @@ func (f *File) FirstOffset() uint64 { return fileHeaderLen }
 // If offset+n exceeds the length of the log then a smaller number
 // of events is returned. If n is 0 then all events starting at the
 // given offset are returned
-func (f *File) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
+func (f *File) Scan(
+	offset uint64,
+	n uint64,
+	fn eventlog.ScanFn,
+) (
+	nextOffset uint64,
+	err error,
+) {
 	b := f.bufPool.Get()
 	defer b.Release()
 	buf := b.Bytes()
@@ -274,47 +281,52 @@ func (f *File) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
 	defer f.lock.RUnlock()
 
 	if offset >= f.tailOffset || f.tailOffset-offset < minEntryLen {
-		return eventlog.ErrOffsetOutOfBound
+		return 0, eventlog.ErrOffsetOutOfBound
 	}
 
+	var i int64
 	if n > 0 {
 		// Limited scan
 		if offset+n > f.tailOffset {
 			n -= offset + n - f.tailOffset
 		}
 
-		for i, r := int64(offset), uint64(0); r < n; r++ {
+		var r uint64
+		for i, r = int64(offset), uint64(0); r < n; r++ {
 			n, tm, pl, err := f.read(buf, i)
 			if err == io.EOF {
 				break
 			} else if err != nil {
-				return err
+				return 0, err
 			}
 			i += int64(n)
 			if err := fn(tm, pl, uint64(i)); err != nil {
-				return err
+				return 0, err
 			}
 		}
-		return nil
+	} else {
+		// Unlimited scan
+		for i = int64(offset); ; {
+			if offset >= f.tailOffset {
+				break
+			}
+			n, tm, pl, err := f.read(buf, i)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				return 0, err
+			}
+			i += int64(n)
+			if err := fn(tm, pl, uint64(i)); err != nil {
+				return 0, err
+			}
+		}
 	}
 
-	// Unlimited scan
-	for i := int64(offset); ; {
-		if offset >= f.tailOffset {
-			break
-		}
-		n, tm, pl, err := f.read(buf, i)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return err
-		}
-		i += int64(n)
-		if err := fn(tm, pl, uint64(i)); err != nil {
-			return err
-		}
+	if uint64(i) < f.tailOffset {
+		nextOffset = uint64(i)
 	}
-	return nil
+	return
 }
 
 // Append appends a new entry onto the event log

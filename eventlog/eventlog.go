@@ -44,8 +44,17 @@ type EventLog interface {
 	// Scan reads n events at the given offset
 	// calling the given callback function for each read entry.
 	// The scan is resumed as long as there are events to be read
-	// and the callback function returns true
-	Scan(offset uint64, n uint64, fn ScanFn) error
+	// and the callback function returns true.
+	// If the returned nextOffset is 0 then there are no more
+	// entries to be scanned after the last scanned one
+	Scan(
+		offset uint64,
+		n uint64,
+		fn ScanFn,
+	) (
+		nextOffset uint64,
+		err error,
+	)
 }
 
 var (

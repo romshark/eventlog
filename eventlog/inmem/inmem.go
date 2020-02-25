@@ -51,14 +51,21 @@ func (l *Inmem) FirstOffset() uint64 { return 0 }
 // If offset+n exceeds the length of the log then a smaller number
 // of events is returned. Of n is 0 then all events starting at the
 // given offset are returned
-func (l *Inmem) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
+func (l *Inmem) Scan(
+	offset uint64,
+	n uint64,
+	fn eventlog.ScanFn,
+) (
+	nextOffset uint64,
+	err error,
+) {
 	l.lock.RLock()
 	defer l.lock.RUnlock()
 
 	ln := uint64(len(l.store))
 
 	if offset >= ln {
-		return eventlog.ErrOffsetOutOfBound
+		return 0, eventlog.ErrOffsetOutOfBound
 	}
 
 	var events []inmemEvent
@@ -66,19 +73,24 @@ func (l *Inmem) Scan(offset uint64, n uint64, fn eventlog.ScanFn) error {
 		if offset+n > ln {
 			events = l.store[offset:]
 		} else {
-			events = l.store[offset : offset+n]
+			nextOffset = offset + n
+			events = l.store[offset:nextOffset]
+			if nextOffset >= ln {
+				nextOffset = 0
+			}
 		}
 	} else {
 		events = l.store[offset:]
 	}
 
 	for _, e := range events {
-		if err := fn(e.Timestamp, e.Payload, offset); err != nil {
-			return err
+		if err = fn(e.Timestamp, e.Payload, offset); err != nil {
+			return
 		}
 		offset++
 	}
-	return nil
+
+	return
 }
 
 // Append appends a new entry onto the event log
