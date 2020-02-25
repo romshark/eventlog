@@ -1,5 +1,5 @@
-<a href="https://travis-ci.org/romshark/eventlog">
-    <img src="https://travis-ci.org/romshark/eventlog.svg?branch=master" alt="Travis CI: build status">
+<a href="https://github.com/romshark/eventlog/actions?query=workflow%3ACI">
+    <img src="https://github.com/romshark/eventlog/workflows/CI/badge.svg" alt="GitHub Actions: CI">
 </a>
 <a href="https://coveralls.io/github/romshark/eventlog">
     <img src="https://coveralls.io/repos/github/romshark/eventlog/badge.svg" alt="Coverage Status" />
