@@ -1,7 +1,6 @@
 package fasthttp
 
 import (
-	"errors"
 	"strconv"
 
 	"github.com/romshark/eventlog/eventlog"
@@ -22,14 +21,11 @@ var (
 
 // Server is an HTTP API instance
 type Server struct {
-	eventLog eventlog.EventLog
+	eventLog *eventlog.EventLog
 }
 
 // New returns a new HTTP API
-func New(eventLog eventlog.EventLog) *Server {
-	if eventLog == nil {
-		panic(errors.New("missing eventlog on Server init"))
-	}
+func New(eventLog *eventlog.EventLog) *Server {
 	return &Server{
 		eventLog: eventLog,
 	}

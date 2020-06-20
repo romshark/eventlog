@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/romshark/eventlog/client"
+	"github.com/romshark/eventlog/eventlog"
 	evfile "github.com/romshark/eventlog/eventlog/file"
 	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
 
@@ -33,7 +34,7 @@ func newBenchmarkSetup(b *testing.B) (clt client.Client, teardown func()) {
 
 	ln := fasthttputil.NewInmemoryListener()
 
-	server := ffhttp.New(l)
+	server := ffhttp.New(eventlog.New(l))
 	httpServer := &fasthttp.Server{
 		Handler:     server.Serve,
 		ReadTimeout: 10 * time.Millisecond,

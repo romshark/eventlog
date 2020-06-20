@@ -1,7 +1,10 @@
 package fasthttp
 
 import (
+	"encoding/json"
 	"errors"
+	"time"
+	"unsafe"
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
@@ -19,10 +22,40 @@ func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	offset, newVersion, tm, err := s.eventLog.AppendCheck(
-		assumedVersion,
-		ctx.PostBody(),
+	// offset, newVersion, tm, err := s.eventLog.AppendCheck(
+	// 	assumedVersion,
+	// 	ctx.PostBody(),
+	// )
+
+	var (
+		b          = ctx.Request.Body()
+		offset     uint64
+		newVersion uint64
+		tm         time.Time
 	)
+
+	switch b[0] {
+	case '{':
+		// Single event
+		offset, newVersion, tm, err = s.eventLog.AppendCheck(
+			assumedVersion,
+			b,
+		)
+	case '[':
+		// Multiple events
+		var a []json.RawMessage
+		if err = json.Unmarshal(b, &a); err != nil {
+			err = eventlog.ErrInvalidPayload
+			break
+		}
+		offset, newVersion, tm, err = s.eventLog.AppendCheckMulti(
+			assumedVersion,
+			*(*[][]byte)(unsafe.Pointer(&a))...,
+		)
+	default:
+		err = eventlog.ErrInvalidPayload
+	}
+
 	switch {
 	case errors.Is(err, eventlog.ErrMismatchingVersions):
 		ctx.SetBody(consts.StatusMsgErrMismatchingVersions)
