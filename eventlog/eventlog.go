@@ -81,6 +81,7 @@ type Implementer interface {
 var (
 	ErrOffsetOutOfBound    = errors.New("offset out of bound")
 	ErrMismatchingVersions = errors.New("mismatching versions")
+	ErrInvalidOffset       = errors.New("invalid offset")
 )
 
 type EventLog struct {

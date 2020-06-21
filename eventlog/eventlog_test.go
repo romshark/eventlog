@@ -316,7 +316,7 @@ func ImplementationTest(
 			check(t, events, expected{})
 		},
 
-		// TestAppendInvalidPayload assumes ErrOffsetOutOfBound
+		// TestAppendInvalidPayload assumes ErrInvalidPayload
 		// to be returned when reading with an offset
 		// that's >= the length of the log
 		"TestAppendInvalidPayload": func(t *testing.T, l *eventlog.EventLog) {

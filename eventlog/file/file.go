@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cespare/xxhash"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/bufpool"
 )
@@ -23,8 +24,6 @@ const (
 	maxPayloadLen         = 1024 * 1024 // 1 MiB
 	minPossiblePayloadLen = 7           // {"x":0}
 	minEntryLen           = entryHeaderLen + minPossiblePayloadLen
-
-	entryInitSym = '\n'
 )
 
 // Error types
@@ -114,38 +113,20 @@ func (f *File) read(
 	err error,
 ) {
 	var n int
+	var payloadHash uint64
 
 	buf8 := buf[:8]
 	buf4 := buf[:4]
-	buf1 := buf[:1]
 
-	// Read entry initiation symbol
-	if _, err = f.file.ReadAt(buf1, offset); errors.Is(err, io.EOF) {
+	// Read timestamp (8 bytes)
+	n, err = f.file.ReadAt(buf8, offset)
+	switch {
+	case errors.Is(err, io.EOF):
 		return
-	} else if err != nil {
-		err = fmt.Errorf(
-			"reading entry initiation symbol at offset %d: %w",
-			offset,
-			err,
-		)
-		return
-	}
-	if buf1[0] != entryInitSym {
-		err = fmt.Errorf(
-			"expected entry initiation symbol at offset %d, got %v",
-			offset,
-			buf1[0],
-		)
-		return
-	}
-	bytesRead++
-
-	// Read timestamp
-	n, err = f.file.ReadAt(buf8, offset+1)
-	if err != nil {
+	case err != nil:
 		err = fmt.Errorf(
 			"reading timestamp at offset %d: %w",
-			offset+1,
+			offset,
 			err,
 		)
 		return
@@ -158,15 +139,34 @@ func (f *File) read(
 		return
 	}
 	bytesRead += 8
-
 	tm = binary.LittleEndian.Uint64(buf8)
 
+	// Read payload hash (8 bytes, xxhash64)
+	n, err = f.file.ReadAt(buf8, offset+8)
+	if err != nil {
+		err = fmt.Errorf(
+			"reading payload hash at offset %d: %w",
+			offset+8,
+			err,
+		)
+		return
+	}
+	if n != 8 {
+		err = fmt.Errorf(
+			"reading payload hash (expected: 8; read: %d)",
+			n,
+		)
+		return
+	}
+	bytesRead += 8
+	payloadHash = binary.LittleEndian.Uint64(buf8)
+
 	// Read payload len
-	n, err = f.file.ReadAt(buf4, offset+9)
+	n, err = f.file.ReadAt(buf4, offset+16)
 	if err != nil {
 		err = fmt.Errorf(
 			"reading payload length at offset %d: %w",
-			offset+9,
+			offset+16,
 			err,
 		)
 		return
@@ -191,43 +191,13 @@ func (f *File) read(
 		return
 	}
 
-	// Read & check terminator (if not last entry)
-	buf2 := buf[:2]
-	termSeqOffset := offset + bytesRead + int64(payloadLen) - 1
-	if uint64(termSeqOffset)+1 < f.tailOffset {
-		// Not last entry
-		n, err = f.file.ReadAt(buf2, termSeqOffset)
-		if err != nil {
-			err = fmt.Errorf(
-				"reading next payload terminator (-1) at offset %d: %w",
-				offset+int64(payloadLen)-1,
-				err,
-			)
-			return
-		}
-		if n != 2 {
-			err = fmt.Errorf(
-				"reading next payload terminator (expected: 2; read: %d)",
-				n,
-			)
-			return
-		}
-		if buf2[0] != '}' || buf2[1] != entryInitSym {
-			err = fmt.Errorf(
-				"unexpected termination sequence: %s",
-				buf2,
-			)
-			return
-		}
-	}
-
 	// Read payload
 	pl = buf[:payloadLen]
-	n, err = f.file.ReadAt(pl, offset+13)
+	n, err = f.file.ReadAt(pl, offset+20)
 	if err != nil {
 		err = fmt.Errorf(
 			"reading payload at offset %d: %w",
-			offset+13,
+			offset+20,
 			err,
 		)
 		return
@@ -241,6 +211,12 @@ func (f *File) read(
 		return
 	}
 	bytesRead += int64(payloadLen)
+
+	// Verify payload integrity
+	if payloadHash != xxhash.Sum64(pl) {
+		err = eventlog.ErrInvalidOffset
+		return
+	}
 
 	return
 }
@@ -441,14 +417,6 @@ func (f *File) writeLog(
 	payload []byte,
 ) (int64, error) {
 	offset := int64(f.tailOffset)
-	buf1 := buf[:1]
-
-	// Write entry initiation symbol
-	buf1[0] = entryInitSym
-	if _, err := f.file.WriteAt(buf1, offset); err != nil {
-		return 0, err
-	}
-	offset++
 
 	buf8 := buf[:8]
 	buf4 := buf[:4]
@@ -457,51 +425,60 @@ func (f *File) writeLog(
 	binary.LittleEndian.PutUint64(buf8, timestamp)
 	n, err := f.file.WriteAt(buf8, offset)
 	if err != nil {
-		return 1, err
+		return 0, err
 	}
 	if n != 8 {
-		return 1, fmt.Errorf(
+		return 0, fmt.Errorf(
 			"writing timestamp, unexpectedly wrote: %d",
 			n,
 		)
 	}
-	offset += 8
+
+	// Write payload hash (8 bytes, xxhash64)
+	checksum := xxhash.Sum64(payload)
+	binary.LittleEndian.PutUint64(buf8, checksum)
+	if n, err = f.file.WriteAt(buf8, offset+8); err != nil {
+		return 8, err
+	}
+	if n != 8 {
+		return 8, fmt.Errorf(
+			"writing payload hash, unexpectedly wrote: %d",
+			n,
+		)
+	}
 
 	// Write payload length (4 bytes)
 	pldLen := uint32(len(payload))
-
 	binary.LittleEndian.PutUint32(buf4, pldLen)
-	n, err = f.file.WriteAt(buf4, offset)
+	n, err = f.file.WriteAt(buf4, offset+16)
 	if err != nil {
-		return 9, err
+		return 16, err
 	}
 	if n != 4 {
-		return 9, fmt.Errorf(
+		return 16, fmt.Errorf(
 			"writing payload length, unexpectedly wrote: %d",
 			n,
 		)
 	}
-	offset += 4
 
 	// Write payload
-	n, err = f.file.WriteAt(payload, offset)
+	n, err = f.file.WriteAt(payload, offset+20)
 	if err != nil {
-		return 13, err
+		return 20, err
 	}
 	if n != len(payload) {
-		return 13, fmt.Errorf(
+		return 20, fmt.Errorf(
 			"writing payload, unexpectedly wrote: %d",
 			n,
 		)
 	}
-	offset += int64(len(payload))
 
 	if err := f.file.Sync(); err != nil {
-		return 13, err
+		return 20, err
 	}
 
 	wrote := offset - int64(f.tailOffset)
-	f.tailOffset = uint64(offset)
+	f.tailOffset += uint64(20) + uint64(len(payload))
 
 	return wrote, nil
 }
