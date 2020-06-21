@@ -44,29 +44,36 @@ func strconvParseUint(s []byte) (uint64, error) {
 	return strconv.ParseUint(string(s), 10, 64)
 }
 
-func BenchmarkReadUint64(b *testing.B) {
+func BenchmarkReadUint64Base10(b *testing.B) {
 	for _, b1 := range []string{
 		"0", "1", "2", "3", "11", "999", "1024",
 		"18446744073709551615",
 		"61489146919",
 		"000000000000000",
 	} {
-		for _, b2 := range []struct {
-			fnName string
-			fn     func(s []byte) (uint64, error)
-		}{
-			{"fmt.Fprintf", strconvParseUint},
-			{"hex.ReadUint64", hex.ReadUint64},
-		} {
-			b.Run(fmt.Sprintf("%s_%s", b1, b2.fnName), func(b *testing.B) {
-				in := []byte(b1)
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					if _, err := b2.fn(in); err != nil {
-						panic(err)
-					}
-				}
-			})
+		in := []byte(b1)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := strconvParseUint(in); err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
+func BenchmarkReadUint64Hex(b *testing.B) {
+	for _, b1 := range []string{
+		"0", "1", "2", "3", "B", "3E7", "400",
+		"FFFFFFFFFFFFFFFF",
+		"E5109EC27",
+		"000000000000000",
+	} {
+		in := []byte(b1)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := hex.ReadUint64(in); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
