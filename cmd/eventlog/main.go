@@ -41,7 +41,7 @@ func main() {
 	flag.Parse()
 
 	// Initialize the event log engine
-	var l eventlog.EventLog
+	var l eventlog.Implementer
 	var err error
 	switch *flagStoreEngine {
 	case engineInmem:
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// Initialize the frontend
-	server := ffhttp.New(l)
+	server := ffhttp.New(eventlog.New(l))
 	httpServer := &fasthttp.Server{
 		Handler: server.Serve,
 	}

@@ -7,20 +7,20 @@ import (
 	"github.com/romshark/eventlog/eventlog"
 )
 
-// Make sure *Inmem implements EventLog
-var _ eventlog.EventLog = new(Inmem)
+// Make sure *Inmem implements eventlog.Implementer
+var _ eventlog.Implementer = new(Inmem)
 
 type inmemEvent struct {
 	Timestamp uint64
 	Payload   []byte
 }
 
-func newInmemEvent(payload []byte) inmemEvent {
+func newInmemEvent(payload []byte, tm time.Time) inmemEvent {
 	p := make([]byte, len(payload))
 	copy(p, payload)
 
 	return inmemEvent{
-		Timestamp: uint64(time.Now().UTC().Unix()),
+		Timestamp: uint64(tm.UTC().Unix()),
 		Payload:   p,
 	}
 }
@@ -36,7 +36,6 @@ func NewInmem() (*Inmem, error) {
 	return &Inmem{}, nil
 }
 
-// Version implements EventLog.Version
 func (l *Inmem) Version() uint64 {
 	l.lock.RLock()
 	v := len(l.store)
@@ -44,7 +43,6 @@ func (l *Inmem) Version() uint64 {
 	return uint64(v)
 }
 
-// FirstOffset implements EventLog.FirstOffset
 func (l *Inmem) FirstOffset() uint64 { return 0 }
 
 // Scan reads a maximum of n events starting at the given offset.
@@ -93,18 +91,14 @@ func (l *Inmem) Scan(
 	return
 }
 
-// Append appends a new entry onto the event log
-func (l *Inmem) Append(payload []byte) (
+func (l *Inmem) Append(payloadJSON []byte) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = eventlog.VerifyPayload(payload); err != nil {
-		return
-	}
-
-	ev := newInmemEvent(payload)
+	tm = time.Now()
+	ev := newInmemEvent(payloadJSON, tm)
 
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -112,28 +106,77 @@ func (l *Inmem) Append(payload []byte) (
 	l.store = append(l.store, ev)
 	ln := uint64(len(l.store))
 
-	tm = time.Unix(int64(ev.Timestamp), 0)
 	offset = ln - 1
 	newVersion = ln
 	return
 }
 
-// AppendCheck appends a new entry onto the event log
-// expecting offset to be the offset of the last entry plus 1
+func (l *Inmem) AppendMulti(payloadsJSON ...[]byte) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	ev := make([]inmemEvent, len(payloadsJSON))
+	tm = time.Now()
+	for i, p := range payloadsJSON {
+		ev[i] = newInmemEvent(p, tm)
+	}
+
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
+	l.store = append(l.store, ev...)
+	ln := uint64(len(l.store))
+
+	offset = ln - 1
+	newVersion = ln
+	return
+}
+
 func (l *Inmem) AppendCheck(
 	assumedVersion uint64,
-	payload []byte,
+	payloadJSON []byte,
 ) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = eventlog.VerifyPayload(payload); err != nil {
+	tm = time.Now()
+	ev := newInmemEvent(payloadJSON, tm)
+
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
+	if assumedVersion != uint64(len(l.store)) {
+		tm = time.Time{}
+		err = eventlog.ErrMismatchingVersions
 		return
 	}
 
-	ev := newInmemEvent(payload)
+	l.store = append(l.store, ev)
+	ln := uint64(len(l.store))
+
+	offset = ln - 1
+	newVersion = ln
+	return
+}
+
+func (l *Inmem) AppendCheckMulti(
+	assumedVersion uint64,
+	payloadsJSON ...[]byte,
+) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	ev := make([]inmemEvent, len(payloadsJSON))
+	tm = time.Now()
+	for i, p := range payloadsJSON {
+		ev[i] = newInmemEvent(p, tm)
+	}
 
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -143,10 +186,9 @@ func (l *Inmem) AppendCheck(
 		return
 	}
 
-	l.store = append(l.store, ev)
+	l.store = append(l.store, ev...)
 	ln := uint64(len(l.store))
 
-	tm = time.Unix(int64(ev.Timestamp), 0)
 	offset = ln - 1
 	newVersion = ln
 	return

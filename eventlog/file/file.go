@@ -33,8 +33,8 @@ var (
 	ErrInvalidPayloadLength = errors.New("invalid payload length")
 )
 
-// Make sure *File implements EventLog
-var _ eventlog.EventLog = new(File)
+// Make sure *File implements eventlog.Implementer
+var _ eventlog.Implementer = new(File)
 
 // File is a persistent file-based event log
 type File struct {
@@ -329,17 +329,12 @@ func (f *File) Scan(
 	return
 }
 
-// Append appends a new entry onto the event log
-func (f *File) Append(payload []byte) (
+func (f *File) Append(payloadJSON []byte) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = eventlog.VerifyPayload(payload); err != nil {
-		return
-	}
-
 	tm = time.Now().UTC()
 	timestamp := uint64(tm.Unix())
 
@@ -350,25 +345,43 @@ func (f *File) Append(payload []byte) (
 	defer f.lock.Unlock()
 
 	offset = f.tailOffset
-	_, err = f.writeLog(buf.Bytes(), timestamp, payload)
+	_, err = f.writeLog(buf.Bytes(), timestamp, payloadJSON)
 	newVersion = f.tailOffset
 	return
 }
 
-// AppendCheck implements EventLog.AppendCheck
+func (f *File) AppendMulti(payloadsJSON ...[]byte) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	tm = time.Now().UTC()
+	timestamp := uint64(tm.Unix())
+
+	buf := f.bufPool.Get()
+	defer buf.Release()
+
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	for _, p := range payloadsJSON {
+		offset = f.tailOffset
+		_, err = f.writeLog(buf.Bytes(), timestamp, p)
+		newVersion = f.tailOffset
+	}
+	return
+}
+
 func (f *File) AppendCheck(
 	assumedVersion uint64,
-	payload []byte,
+	payloadJSON []byte,
 ) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = eventlog.VerifyPayload(payload); err != nil {
-		return
-	}
-
 	tm = time.Now().UTC()
 	timestamp := uint64(tm.Unix())
 
@@ -385,8 +398,40 @@ func (f *File) AppendCheck(
 	}
 
 	offset = f.tailOffset
-	_, err = f.writeLog(buf.Bytes(), timestamp, payload)
+	_, err = f.writeLog(buf.Bytes(), timestamp, payloadJSON)
 	newVersion = f.tailOffset
+	return
+}
+
+func (f *File) AppendCheckMulti(
+	assumedVersion uint64,
+	payloadsJSON ...[]byte,
+) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	tm = time.Now().UTC()
+	timestamp := uint64(tm.Unix())
+
+	buf := f.bufPool.Get()
+	defer buf.Release()
+
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if assumedVersion != f.tailOffset {
+		tm = time.Time{}
+		err = eventlog.ErrMismatchingVersions
+		return
+	}
+
+	for _, p := range payloadsJSON {
+		offset = f.tailOffset
+		_, err = f.writeLog(buf.Bytes(), timestamp, p)
+		newVersion = f.tailOffset
+	}
 	return
 }
 

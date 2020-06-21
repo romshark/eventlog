@@ -26,18 +26,14 @@ type Event struct {
 
 // Client represents an abstract client
 type Client interface {
-	Append(
-		payload map[string]interface{},
-	) (
+	Append(payload ...map[string]interface{}) (
 		offset string,
 		newVersion string,
 		tm time.Time,
 		err error,
 	)
 
-	AppendBytes(
-		payload []byte,
-	) (
+	AppendBytes(payload []byte) (
 		offset string,
 		newVersion string,
 		tm time.Time,
@@ -47,6 +43,16 @@ type Client interface {
 	AppendCheck(
 		assumedVersion string,
 		payload map[string]interface{},
+	) (
+		offset string,
+		newVersion string,
+		tm time.Time,
+		err error,
+	)
+
+	AppendCheckMulti(
+		assumedVersion string,
+		payload ...map[string]interface{},
 	) (
 		offset string,
 		newVersion string,
