@@ -26,12 +26,6 @@ const (
 	minEntryLen           = entryHeaderLen + minPossiblePayloadLen
 )
 
-// Error types
-var (
-	ErrPayloadExceedLimit   = errors.New("payload exceeded limit")
-	ErrInvalidPayloadLength = errors.New("invalid payload length")
-)
-
 // Make sure *File implements eventlog.Implementer
 var _ eventlog.Implementer = new(File)
 
@@ -182,12 +176,9 @@ func (f *File) read(
 
 	// Check payload length
 	payloadLen := binary.LittleEndian.Uint32(buf4)
-	switch {
-	case payloadLen < minPossiblePayloadLen:
-		err = ErrInvalidPayloadLength
-		return
-	case payloadLen > maxPayloadLen:
-		err = ErrPayloadExceedLimit
+	if payloadLen < minPossiblePayloadLen || payloadLen > maxPayloadLen {
+		// Invalid payload length indicates wrong offset
+		err = eventlog.ErrInvalidOffset
 		return
 	}
 
