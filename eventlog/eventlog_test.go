@@ -143,7 +143,7 @@ func ImplementationTest(
 			// Read all events
 			events, nextOffset, err := scan(l, offset1, 0)
 			require.NoError(t, err)
-			require.Zero(t, nextOffset)
+			require.Equal(t, l.Version(), nextOffset)
 
 			check(t, events, expected{
 				{"ix": float64(1)},
