@@ -3,6 +3,8 @@ package eventlog
 import (
 	"errors"
 	"time"
+
+	"github.com/romshark/eventlog/internal/jsonminify"
 )
 
 // ScanFn is called by EventLog.Scan for each scanned event
@@ -121,6 +123,7 @@ func (e *EventLog) Append(payloadJSON []byte) (
 	if err = ValidatePayloadJSON(payloadJSON); err != nil {
 		return
 	}
+	payloadJSON = jsonminify.Minify(payloadJSON)
 	return e.impl.Append(payloadJSON)
 }
 
@@ -135,6 +138,9 @@ func (e *EventLog) AppendMulti(payloadsJSON ...[]byte) (
 		if err = ValidatePayloadJSON(p); err != nil {
 			return
 		}
+	}
+	for i, p := range payloadsJSON {
+		payloadsJSON[i] = jsonminify.Minify(p)
 	}
 	return e.impl.AppendMulti(payloadsJSON...)
 }
@@ -156,6 +162,7 @@ func (e *EventLog) AppendCheck(
 	if err = ValidatePayloadJSON(payloadJSON); err != nil {
 		return
 	}
+	payloadJSON = jsonminify.Minify(payloadJSON)
 	return e.impl.AppendCheck(assumedVersion, payloadJSON)
 }
 
@@ -177,6 +184,9 @@ func (e *EventLog) AppendCheckMulti(
 		if err = ValidatePayloadJSON(p); err != nil {
 			return
 		}
+	}
+	for i, p := range payloadsJSON {
+		payloadsJSON[i] = jsonminify.Minify(p)
 	}
 	return e.impl.AppendCheckMulti(assumedVersion, payloadsJSON...)
 }
