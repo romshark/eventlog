@@ -4,9 +4,10 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// WriteUint64 as short-lower-hex to the given buffer
-//
-// ctx is not a io.Writer to avoid call-overhead and allocations
+// WriteUint64 writes the given integer as short-lower-hex
+// directly to the given request context to avoid indirect calls which
+// not only incur overhead but also cause unnecessary allocations
+// due to escape analysis
 func WriteUint64(ctx *fasthttp.RequestCtx, num uint64) (int, error) {
 	if num == 0 {
 		return ctx.Write(lookupTable[0:1])
