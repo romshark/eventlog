@@ -70,6 +70,7 @@ func (l *Inmem) Scan(
 	if n > 0 {
 		if offset+n > ln {
 			events = l.store[offset:]
+			nextOffset = offset + uint64(len(events))
 		} else {
 			nextOffset = offset + n
 			events = l.store[offset:nextOffset]
@@ -79,6 +80,7 @@ func (l *Inmem) Scan(
 		}
 	} else {
 		events = l.store[offset:]
+		nextOffset = offset + uint64(len(events))
 	}
 
 	for _, e := range events {
