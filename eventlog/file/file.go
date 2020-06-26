@@ -290,9 +290,7 @@ func (f *File) Scan(
 		}
 	}
 
-	if uint64(i) < f.tailOffset {
-		nextOffset = uint64(i)
-	}
+	nextOffset = uint64(i)
 	return
 }
 
