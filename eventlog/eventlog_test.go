@@ -162,7 +162,7 @@ func ImplementationTest(
 		// events with UTF-8 encoded payloads to succeed
 		"TestAppendReadUTF8": func(t *testing.T, l *eventlog.EventLog) {
 			// Append first event
-			newOffset, _, _, err := l.Append(PayloadJSON(t, Payload{
+			newOffset, newVersion, _, err := l.Append(PayloadJSON(t, Payload{
 				"ключ":     "значение",
 				"გასაღები": "მნიშვნელობა",
 			}))
@@ -171,7 +171,8 @@ func ImplementationTest(
 			// Read event
 			events, nextOffset, err := scan(l, newOffset, 0)
 			require.NoError(t, err)
-			require.Zero(t, nextOffset)
+			require.Equal(t, l.Version(), nextOffset)
+			require.Equal(t, l.Version(), newVersion)
 
 			check(t, events, expected{
 				{
@@ -185,9 +186,12 @@ func ImplementationTest(
 		"TestReadN": func(t *testing.T, l *eventlog.EventLog) {
 			const numEvents = 10
 
+			var latestVersion uint64
 			offsets := make([]uint64, 0, numEvents)
 			for i := 0; i < numEvents; i++ {
-				offset, _, _, err := l.Append(PayloadJSON(t, Payload{"index": i}))
+				var offset uint64
+				var err error
+				offset, latestVersion, _, err = l.Append(PayloadJSON(t, Payload{"index": i}))
 				require.NoError(t, err)
 				offsets = append(offsets, offset)
 			}
@@ -205,11 +209,11 @@ func ImplementationTest(
 				{"index": float64(4)},
 			})
 
-			// Read the second half of events  using the offset
+			// Read the second half of events using the offset
 			// of the next item from the previous scan
 			events, nextOffset, err = scan(l, nextOffset, 5)
 			require.NoError(t, err)
-			require.Zero(t, nextOffset)
+			require.Equal(t, latestVersion, nextOffset)
 
 			check(t, events, expected{
 				{"index": float64(5)},
@@ -225,15 +229,17 @@ func ImplementationTest(
 		"TestReadNGreaterLen": func(t *testing.T, l *eventlog.EventLog) {
 			const numEvents = 5
 
+			var latestVersion uint64
 			for i := 0; i < numEvents; i++ {
-				_, _, _, err := l.Append(PayloadJSON(t, Payload{"index": i}))
+				var err error
+				_, latestVersion, _, err = l.Append(PayloadJSON(t, Payload{"index": i}))
 				require.NoError(t, err)
 			}
 
 			// Read more events than there actually are
 			events, nextOffset, err := scan(l, l.FirstOffset(), numEvents+1)
 			require.NoError(t, err)
-			require.Zero(t, nextOffset)
+			require.Equal(t, latestVersion, nextOffset)
 
 			check(t, events, expected{
 				{"index": float64(0)},
@@ -270,7 +276,7 @@ func ImplementationTest(
 
 			events, nextOffset, err := scan(l, l.FirstOffset(), 0)
 			require.NoError(t, err)
-			require.Zero(t, nextOffset)
+			require.Equal(t, version, nextOffset)
 
 			check(t, events, expected{
 				{"index": "0"},
