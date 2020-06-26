@@ -125,11 +125,9 @@ func (l *Inmem) AppendMulti(payloadsJSON ...[]byte) (
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
+	offset = uint64(len(l.store))
 	l.store = append(l.store, ev...)
-	ln := uint64(len(l.store))
-
-	offset = ln - 1
-	newVersion = ln
+	newVersion = uint64(len(l.store))
 	return
 }
 
