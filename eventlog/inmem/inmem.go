@@ -74,9 +74,6 @@ func (l *Inmem) Scan(
 		} else {
 			nextOffset = offset + n
 			events = l.store[offset:nextOffset]
-			if nextOffset >= ln {
-				nextOffset = 0
-			}
 		}
 	} else {
 		events = l.store[offset:]
