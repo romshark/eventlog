@@ -49,9 +49,5 @@ func (s *Server) handleAppend(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	if offset == 0 {
-		return nil
-	}
-
 	return writeAppendResponse(ctx, offset, newVersion, tm)
 }
