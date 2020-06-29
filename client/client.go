@@ -42,16 +42,6 @@ type Client interface {
 
 	AppendCheck(
 		assumedVersion string,
-		payload map[string]interface{},
-	) (
-		offset string,
-		newVersion string,
-		tm time.Time,
-		err error,
-	)
-
-	AppendCheckMulti(
-		assumedVersion string,
 		payload ...map[string]interface{},
 	) (
 		offset string,

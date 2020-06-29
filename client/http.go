@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -75,30 +76,6 @@ func (c *HTTP) Append(payload ...map[string]interface{}) (
 // AppendCheck implements Client.AppendCheck
 func (c *HTTP) AppendCheck(
 	assumedVersion string,
-	payload map[string]interface{},
-) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
-	if len(payload) < 1 {
-		err = ErrInvalidPayload
-		return
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		err = fmt.Errorf("marshaling event body: %w", err)
-		return
-	}
-
-	return c.appendBytes(true, assumedVersion, body)
-}
-
-// AppendCheckMulti implements Client.AppendCheckMulti
-func (c *HTTP) AppendCheckMulti(
-	assumedVersion string,
 	payload ...map[string]interface{},
 ) (
 	offset string,
@@ -106,17 +83,29 @@ func (c *HTTP) AppendCheckMulti(
 	tm time.Time,
 	err error,
 ) {
-	if len(payload) < 1 {
+	if assumedVersion == "" {
+		err = errors.New("no assumed version")
+		return
+	}
+
+	var body []byte
+	switch l := len(payload); {
+	case l < 1:
 		err = ErrInvalidPayload
 		return
+	case l == 1:
+		body, err = json.Marshal(payload[0])
+		if err != nil {
+			err = fmt.Errorf("marshaling event body: %w", err)
+			return
+		}
+	case l > 1:
+		body, err = json.Marshal(payload)
+		if err != nil {
+			err = fmt.Errorf("marshaling multiple event bodies: %w", err)
+			return
+		}
 	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		err = fmt.Errorf("marshaling event body: %w", err)
-		return
-	}
-
 	return c.appendBytes(true, assumedVersion, body)
 }
 
