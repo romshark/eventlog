@@ -22,11 +22,6 @@ func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	// offset, newVersion, tm, err := s.eventLog.AppendCheck(
-	// 	assumedVersion,
-	// 	ctx.PostBody(),
-	// )
-
 	var (
 		b          = ctx.Request.Body()
 		offset     uint64
