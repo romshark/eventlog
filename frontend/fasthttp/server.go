@@ -17,6 +17,7 @@ var (
 	methodPost = []byte("POST")
 	uriLog     = []byte("/log/")
 	uriBegin   = []byte("/begin")
+	uriVersion = []byte("/version")
 )
 
 // Server is an HTTP API instance

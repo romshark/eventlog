@@ -66,4 +66,6 @@ type Client interface {
 	) ([]Event, error)
 
 	Begin() (string, error)
+
+	Version() (string, error)
 }
