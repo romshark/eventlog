@@ -106,13 +106,6 @@ func (e *EventLog) FirstOffset() uint64 {
 	return e.impl.FirstOffset()
 }
 
-type PayloadType int
-
-const (
-	_ PayloadType = iota
-	PayloadTypeJSON
-)
-
 // Append appends an event with the given payload to the log
 func (e *EventLog) Append(payloadJSON []byte) (
 	offset uint64,
