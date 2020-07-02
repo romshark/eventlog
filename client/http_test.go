@@ -53,6 +53,25 @@ func TestAppend(t *testing.T) {
 	r.Equal(fromHex(t, newVersion2), next)
 }
 
+func TestAppendErrInvalid(t *testing.T) {
+	s := setup(t)
+	r := require.New(t)
+
+	iv, err := s.Client.Version()
+	r.NoError(err)
+
+	of, vr, tm, err := s.Client.Append()
+	r.Error(err)
+	r.True(errors.Is(err, client.ErrInvalidPayload))
+	r.Zero(of)
+	r.Zero(vr)
+	r.Zero(tm)
+
+	av, err := s.Client.Version()
+	r.NoError(err)
+	r.Equal(iv, av)
+}
+
 func TestAppendBytes(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
