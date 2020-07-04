@@ -207,7 +207,6 @@ func (e *EventLog) Close() error {
 	if err := e.impl.Close(); err != nil {
 		return err
 	}
-	e.broadcast.Close()
 	return nil
 }
 
