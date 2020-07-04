@@ -386,6 +386,11 @@ func setup(t *testing.T) (s struct {
 	require.NoError(t, err)
 
 	s.DB = eventlog.New(i)
+	t.Cleanup(func() {
+		if err := s.DB.Close(); err != nil {
+			panic(fmt.Errorf("closing eventlog: %s", err))
+		}
+	})
 
 	inMemListener := fasthttputil.NewInmemoryListener()
 	t.Cleanup(func() {

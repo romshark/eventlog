@@ -59,8 +59,10 @@ func main() {
 		log.Fatalf("unsupported engine %q", *flagStoreEngine)
 	}
 
+	eventLog := eventlog.New(l)
+
 	// Initialize the frontend
-	server := ffhttp.New(eventlog.New(l))
+	server := ffhttp.New(eventLog)
 	httpServer := &fasthttp.Server{
 		Handler: server.Serve,
 	}
@@ -80,7 +82,13 @@ func main() {
 
 	log.Println("shutting down...")
 	if err := httpServer.Shutdown(); err != nil {
-		log.Fatalf("shutdown err: %s", err)
+		log.Fatalf("shutting down http server: %s", err)
 	}
+
+	log.Println("closing eventlog...")
+	if err := eventLog.Close(); err != nil {
+		log.Fatalf("closing eventlog: %s", err)
+	}
+
 	log.Println("shutdown")
 }

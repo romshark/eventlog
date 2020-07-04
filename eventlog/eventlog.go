@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/romshark/eventlog/internal/broadcast"
 	"github.com/romshark/eventlog/internal/jsonminify"
 )
 
@@ -78,6 +79,8 @@ type Implementer interface {
 		nextOffset uint64,
 		err error,
 	)
+
+	Close() error
 }
 
 var (
@@ -200,3 +203,12 @@ func (e *EventLog) Scan(
 ) {
 	return e.impl.Scan(offset, n, fn)
 }
+
+func (e *EventLog) Close() error {
+	if err := e.impl.Close(); err != nil {
+		return err
+	}
+	e.broadcast.Close()
+	return nil
+}
+

@@ -186,3 +186,10 @@ func (l *Inmem) AppendCheckMulti(
 	newVersion = uint64(len(l.store))
 	return
 }
+
+func (l *Inmem) Close() error {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	l.store = []inmemEvent{}
+	return nil
+}

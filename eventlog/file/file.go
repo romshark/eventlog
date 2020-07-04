@@ -214,7 +214,13 @@ func (f *File) read(
 
 // Close closes the file
 func (f *File) Close() error {
-	return f.file.Close()
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	if err := f.file.Close(); err != nil {
+		return err
+	}
+	f.file = nil
+	return nil
 }
 
 // Version implements EventLog.Version
