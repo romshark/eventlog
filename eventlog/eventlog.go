@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/romshark/eventlog/internal/broadcast"
 	"github.com/romshark/eventlog/internal/jsonminify"
 )
 
