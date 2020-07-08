@@ -1,13 +1,18 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fasthttp/websocket"
 	"github.com/romshark/eventlog/client"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/inmem"
@@ -377,6 +382,56 @@ func TestBegin(t *testing.T) {
 	r.Equal(vBegin, vBegin2)
 }
 
+func TestListen(t *testing.T) {
+	s := setup(t)
+	r := require.New(t)
+
+	versionChan1 := make(chan string, 1)
+	go func() {
+		if err := s.Client.Listen(context.Background(), func(v []byte) {
+			versionChan1 <- string(v)
+		}); err != nil {
+			panic(err)
+		}
+	}()
+
+	versionChan2 := make(chan string, 1)
+	go func() {
+		if err := s.Client.Listen(context.Background(), func(v []byte) {
+			versionChan2 <- string(v)
+		}); err != nil {
+			panic(err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	_, newVersion, _, err := s.Client.Append(Doc{"foo": "bar"})
+	r.NoError(err)
+
+	r.Equal(newVersion, <-versionChan1)
+	r.Equal(newVersion, <-versionChan2)
+}
+
+func TestListenCancel(t *testing.T) {
+	s := setup(t)
+	r := require.New(t)
+
+	errChan := make(chan error, 1)
+	versionTriggered := uint32(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		errChan <- s.Client.Listen(ctx, func(v []byte) {
+			atomic.AddUint32(&versionTriggered, 1)
+		})
+	}()
+
+	cancel()
+	r.Equal(context.Canceled, <-errChan)
+	r.Zero(atomic.LoadUint32(&versionTriggered))
+}
+
 func setup(t *testing.T) (s struct {
 	DB     *eventlog.EventLog
 	Server *fasthttp.Server
@@ -398,18 +453,34 @@ func setup(t *testing.T) (s struct {
 	})
 
 	s.Server = &fasthttp.Server{
-		Handler: fhttpfront.New(s.DB).Serve,
+		Handler: fhttpfront.New(
+			log.New(os.Stderr, "ERR", log.LstdFlags),
+			s.DB,
+		).Serve,
 	}
 
 	go func() {
 		require.NoError(t, s.Server.Serve(inMemListener))
 	}()
 
-	s.Client = client.NewHTTP(&fasthttp.Client{
-		Dial: func(addr string) (net.Conn, error) {
-			return inMemListener.Dial()
+	s.Client = client.NewHTTP(
+		log.New(os.Stderr, "ERR", log.LstdFlags),
+		&fasthttp.Client{
+			Dial: func(addr string) (net.Conn, error) {
+				return inMemListener.Dial()
+			},
 		},
-	}, "inmem")
+		&websocket.Dialer{
+			NetDialContext: func(
+				ctx context.Context,
+				network string,
+				addr string,
+			) (net.Conn, error) {
+				return inMemListener.Dial()
+			},
+		},
+		"localhost",
+	)
 	return
 }
 

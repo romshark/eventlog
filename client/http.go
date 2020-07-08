@@ -2,14 +2,19 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/romshark/eventlog/internal/consts"
 
+	"github.com/fasthttp/websocket"
 	"github.com/valyala/fasthttp"
 )
 
@@ -31,18 +36,34 @@ var _ Client = new(HTTP)
 
 // HTTP represents an HTTP eventlog client
 type HTTP struct {
-	clt  *fasthttp.Client
-	host string
+	logErr   Log
+	clt      *fasthttp.Client
+	host     string
+	wsDialer *websocket.Dialer
 }
 
 // NewHTTP creates a new HTTP eventlog client
-func NewHTTP(clt *fasthttp.Client, host string) *HTTP {
+func NewHTTP(
+	logErr Log,
+	clt *fasthttp.Client,
+	wsDialer *websocket.Dialer,
+	host string,
+) *HTTP {
 	if clt == nil {
 		clt = &fasthttp.Client{}
 	}
+	if wsDialer == nil {
+		wsDialer = &websocket.Dialer{
+			Proxy:            http.ProxyFromEnvironment,
+			HandshakeTimeout: 45 * time.Second,
+			ReadBufferSize:   16,
+		}
+	}
 	return &HTTP{
-		clt:  clt,
-		host: host,
+		logErr:   logErr,
+		clt:      clt,
+		wsDialer: wsDialer,
+		host:     host,
 	}
 }
 
@@ -326,4 +347,76 @@ func (c *HTTP) Version() (string, error) {
 	}
 
 	return string(b[12 : len(b)-2]), nil
+}
+
+// Listen establishes a websocket connection to the server
+// and starts listening for version update notifications
+// calling onUpdate when one is received.
+func (c *HTTP) Listen(ctx context.Context, onUpdate func([]byte)) error {
+	u := url.URL{
+		Scheme: "ws",
+		Host:   c.host,
+		Path:   "/subscription",
+	}
+
+	conn, _, err := c.wsDialer.DialContext(ctx, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	closed := uint32(0)
+	closeConn := func() {
+		if !atomic.CompareAndSwapUint32(&closed, 0, 1) {
+			// Already closed
+			return
+		}
+		if err := conn.Close(); err != nil {
+			c.logErr.Printf("ERR: closing socket: %s\n", err)
+		}
+	}
+	defer closeConn()
+
+	if ctx.Done() != nil {
+		go func() {
+			<-ctx.Done()
+			closeConn()
+		}()
+	}
+
+	buf := make([]byte, 16)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		conn.SetReadLimit(16)
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			return fmt.Errorf("disabling read timeout on websocket: %w", err)
+		}
+
+		_, r, err := conn.NextReader()
+		if err != nil {
+			if !websocket.IsUnexpectedCloseError(
+				err,
+				websocket.CloseGoingAway,
+				websocket.CloseAbnormalClosure,
+			) {
+				return ErrSocketClosed
+			}
+			return err
+		}
+		n, err := r.Read(buf)
+		switch {
+		case err != nil:
+			return fmt.Errorf("reading websocket: %w", err)
+		case n > 16:
+			return fmt.Errorf("excessive message length (%d/16)", n)
+		}
+		onUpdate(buf[:n])
+	}
+}
+
+var ErrSocketClosed = errors.New("socket closed")
+
+type Log interface {
+	Printf(format string, v ...interface{})
 }
