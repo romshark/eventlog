@@ -40,9 +40,7 @@ jobs:
 
     # Overalls
     - name: overalls
-      env:
-        GOBIN: $(go env GOPATH)/bin
-      run: $GOBIN/overalls -project /home/runner/work/eventlog/eventlog -covermode atomic -debug -- -race -v -coverpkg ./...
+      run: $(go env GOPATH)/bin/overalls -project /home/runner/work/eventlog/eventlog -covermode atomic -debug -- -race -v -coverpkg ./...
 
     # Install goveralls
     - name: Install goveralls
@@ -52,8 +50,7 @@ jobs:
     - name: goveralls
       env:
         COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOBIN: $(go env GOPATH)/bin
-      run: goveralls -coverprofile overalls.coverprofile -service=github -repotoken=$COVERALLS_TOKEN
+      run: $(go env GOPATH)/bin/goveralls -coverprofile overalls.coverprofile -service=github -repotoken=$COVERALLS_TOKEN
 
     # Codecov
     - name: Codecov
