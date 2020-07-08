@@ -89,12 +89,14 @@ var (
 )
 
 type EventLog struct {
-	impl Implementer
+	impl      Implementer
+	broadcast *broadcast.Broadcast
 }
 
 func New(impl Implementer) *EventLog {
 	return &EventLog{
-		impl: impl,
+		impl:      impl,
+		broadcast: broadcast.New(),
 	}
 }
 
@@ -119,7 +121,15 @@ func (e *EventLog) Append(payloadJSON []byte) (
 		return
 	}
 	payloadJSON = jsonminify.Minify(payloadJSON)
-	return e.impl.Append(payloadJSON)
+
+	if offset, newVersion, tm, err = e.impl.Append(
+		payloadJSON,
+	); err != nil {
+		return
+	}
+
+	e.broadcast.Broadcast(newVersion)
+	return
 }
 
 // AppendMulti appends multiple events with the given payloads to the log
@@ -137,7 +147,15 @@ func (e *EventLog) AppendMulti(payloadsJSON ...[]byte) (
 	for i, p := range payloadsJSON {
 		payloadsJSON[i] = jsonminify.Minify(p)
 	}
-	return e.impl.AppendMulti(payloadsJSON...)
+
+	if offset, newVersion, tm, err = e.impl.AppendMulti(
+		payloadsJSON...,
+	); err != nil {
+		return
+	}
+
+	e.broadcast.Broadcast(newVersion)
+	return
 }
 
 // AppendCheck appends an event with the given payload
@@ -158,7 +176,16 @@ func (e *EventLog) AppendCheck(
 		return
 	}
 	payloadJSON = jsonminify.Minify(payloadJSON)
-	return e.impl.AppendCheck(assumedVersion, payloadJSON)
+
+	if offset, newVersion, tm, err = e.impl.AppendCheck(
+		assumedVersion,
+		payloadJSON,
+	); err != nil {
+		return
+	}
+
+	e.broadcast.Broadcast(newVersion)
+	return
 }
 
 // AppendCheckMulti appends multiple events with the given payloads
@@ -183,7 +210,16 @@ func (e *EventLog) AppendCheckMulti(
 	for i, p := range payloadsJSON {
 		payloadsJSON[i] = jsonminify.Minify(p)
 	}
-	return e.impl.AppendCheckMulti(assumedVersion, payloadsJSON...)
+
+	if offset, newVersion, tm, err = e.impl.AppendCheckMulti(
+		assumedVersion,
+		payloadsJSON...,
+	); err != nil {
+		return
+	}
+
+	e.broadcast.Broadcast(newVersion)
+	return
 }
 
 // Scan reads n events at the given offset
@@ -210,3 +246,9 @@ func (e *EventLog) Close() error {
 	return nil
 }
 
+// Subscribe creates an update subscription returning
+// a channel that's triggered when a push is performed successfuly
+func (e *EventLog) Subscribe() (channel <-chan uint64, close func()) {
+	c := make(chan uint64)
+	return c, e.broadcast.Subscribe(c)
+}

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"testing"
@@ -34,7 +35,7 @@ func newBenchmarkSetup(b *testing.B) (clt client.Client, teardown func()) {
 
 	ln := fasthttputil.NewInmemoryListener()
 
-	server := ffhttp.New(eventlog.New(l))
+	server := ffhttp.New(nil, eventlog.New(l))
 	httpServer := &fasthttp.Server{
 		Handler:     server.Serve,
 		ReadTimeout: 10 * time.Millisecond,
@@ -54,11 +55,13 @@ func newBenchmarkSetup(b *testing.B) (clt client.Client, teardown func()) {
 	}
 
 	clt = client.NewHTTP(
+		log.New(os.Stderr, "ERR", log.LstdFlags),
 		&fasthttp.Client{
 			Dial: func(addr string) (net.Conn, error) {
 				return ln.Dial()
 			},
 		},
+		nil,
 		"test",
 	)
 

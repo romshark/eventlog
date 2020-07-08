@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
@@ -68,4 +69,6 @@ type Client interface {
 	Begin() (string, error)
 
 	Version() (string, error)
+
+	Listen(ctx context.Context, onUpdate func([]byte)) error
 }

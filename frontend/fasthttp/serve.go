@@ -27,6 +27,9 @@ func (s *Server) Serve(ctx *fasthttp.RequestCtx) {
 		case bytes.Equal(p, uriVersion):
 			// GET /version
 			handle = s.handleVersion
+		case bytes.Equal(p, uriSubscription):
+			// GET /subscription
+			handle = s.handleSubscription
 		}
 	case bytes.Equal(m, methodPost):
 		switch {

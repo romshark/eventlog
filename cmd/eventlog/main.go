@@ -40,29 +40,32 @@ var (
 func main() {
 	flag.Parse()
 
+	logInfo := log.New(os.Stdout, "", log.LstdFlags)
+	logErr := log.New(os.Stderr, "ERR", log.LstdFlags)
+
 	// Initialize the event log engine
-	var l eventlog.Implementer
+	var eventLogImpl eventlog.Implementer
 	var err error
 	switch *flagStoreEngine {
 	case engineInmem:
-		l, err = engineinmem.NewInmem()
+		eventLogImpl, err = engineinmem.NewInmem()
 		if err != nil {
-			log.Fatal(err)
+			logErr.Fatal(err)
 		}
 	case engineFile:
-		l, err = enginefile.NewFile(*flagStoreFilePath)
+		eventLogImpl, err = enginefile.NewFile(*flagStoreFilePath)
 		if err != nil {
-			log.Fatal(err)
+			logErr.Fatal(err)
 		}
-		defer l.(*enginefile.File).Close()
+		defer eventLogImpl.(*enginefile.File).Close()
 	default:
-		log.Fatalf("unsupported engine %q", *flagStoreEngine)
+		logErr.Fatalf("unsupported engine %q", *flagStoreEngine)
 	}
 
-	eventLog := eventlog.New(l)
+	eventLog := eventlog.New(eventLogImpl)
 
 	// Initialize the frontend
-	server := ffhttp.New(eventLog)
+	server := ffhttp.New(logErr, eventLog)
 	httpServer := &fasthttp.Server{
 		Handler: server.Serve,
 	}
@@ -71,24 +74,26 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	go func() {
-		log.Printf("listening on %s", *flagAPIHTTP)
+		logInfo.Printf("listening on %s", *flagAPIHTTP)
 		if err := httpServer.ListenAndServe(*flagAPIHTTP); err != nil {
-			log.Fatal(err)
+			logErr.Fatal(err)
 		}
 	}()
 
 	// Await stop
 	<-stop
 
-	log.Println("shutting down...")
+	logInfo.Println("shutting down...")
 	if err := httpServer.Shutdown(); err != nil {
-		log.Fatalf("shutting down http server: %s", err)
+		logErr.Printf("shutting down http server: %s", err)
 	}
 
-	log.Println("closing eventlog...")
+	server.Close()
+
+	logInfo.Println("closing eventlog...")
 	if err := eventLog.Close(); err != nil {
-		log.Fatalf("closing eventlog: %s", err)
+		logErr.Fatalf("closing eventlog: %s", err)
 	}
 
-	log.Println("shutdown")
+	logInfo.Println("shutdown")
 }

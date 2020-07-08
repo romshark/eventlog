@@ -1,4 +1,4 @@
-on: [push, pull_request]
+on: push
 name: CI
 jobs:
   build-test-lint:
@@ -6,15 +6,11 @@ jobs:
     steps:
     # Prepare
     - name: Install Go 1.14
-      uses: actions/setup-go@v1
+      uses: actions/setup-go@v2
       with:
         go-version: 1.14
     - name: Checkout repository
       uses: actions/checkout@v2
-    - name: Export GOPATH
-      run: echo "::set-env name=GOPATH::$(go env GOPATH)"
-    - name: Append GOPATH onto PATH
-      run: echo "::set-env name=PATH::$PATH:$GOPATH/bin"
 
     # BUILD
 
@@ -44,7 +40,7 @@ jobs:
 
     # Overalls
     - name: overalls
-      run: overalls -project /home/runner/work/eventlog/eventlog -covermode atomic -debug -- -race -v -coverpkg ./...
+      run: $(go env GOPATH)/bin/overalls -project /home/runner/work/eventlog/eventlog -covermode atomic -debug -- -race -v -coverpkg ./...
 
     # Install goveralls
     - name: Install goveralls
@@ -54,7 +50,7 @@ jobs:
     - name: goveralls
       env:
         COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: goveralls -coverprofile overalls.coverprofile -service=github -repotoken=$COVERALLS_TOKEN
+      run: $(go env GOPATH)/bin/goveralls -coverprofile overalls.coverprofile -service=github -repotoken=$COVERALLS_TOKEN
 
     # Codecov
     - name: Codecov
@@ -68,7 +64,7 @@ jobs:
 
     # Install golangci-lint
     - name: Install golangci-lint
-      run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $GOPATH/bin v1.23.6
+      run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin v1.28.1
 
     # go vet
     - name: go vet
