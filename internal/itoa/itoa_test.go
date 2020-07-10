@@ -12,7 +12,9 @@ import (
 
 func Test(t *testing.T) {
 	for _, i := range []uint32{
-		0, 1, 6, 10, 100, 6789, math.MaxUint32,
+		0, 1, 6, 10, 100, 6789,
+		9_999, 99_999 999_999, 9_999_999, 99_999_999,
+		math.MaxUint32,
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			buf := new(bytes.Buffer)
