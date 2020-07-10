@@ -248,7 +248,7 @@ func (e *EventLog) Close() error {
 }
 
 // Subscribe creates an update subscription returning
-// a channel that's triggered when a push is performed successfuly
+// a channel that's triggered when a push is performed successfully
 func (e *EventLog) Subscribe() (channel <-chan uint64, close func()) {
 	c := make(chan uint64)
 	return c, e.broadcast.Subscribe(c)

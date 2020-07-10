@@ -271,7 +271,7 @@ func (c *Client) tryAppendJSON(
 			return
 		}
 
-		// Transaction successfuly committed
+		// Transaction successfully committed
 		break
 	}
 	return
