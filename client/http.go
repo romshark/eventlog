@@ -32,22 +32,22 @@ var (
 )
 
 // Make sure *HTTP implements Client
-var _ Client = new(HTTP)
+var _ Implementer = new(HTTP)
 
 // HTTP represents an HTTP eventlog client
 type HTTP struct {
+	host     string
 	logErr   Log
 	clt      *fasthttp.Client
-	host     string
 	wsDialer *websocket.Dialer
 }
 
 // NewHTTP creates a new HTTP eventlog client
 func NewHTTP(
+	host string,
 	logErr Log,
 	clt *fasthttp.Client,
 	wsDialer *websocket.Dialer,
-	host string,
 ) *HTTP {
 	if clt == nil {
 		clt = &fasthttp.Client{}
@@ -60,101 +60,15 @@ func NewHTTP(
 		}
 	}
 	return &HTTP{
+		host:     host,
 		logErr:   logErr,
 		clt:      clt,
 		wsDialer: wsDialer,
-		host:     host,
 	}
 }
 
-// Append implements Client.Append
-func (c *HTTP) Append(payload ...map[string]interface{}) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
-	var body []byte
-	switch l := len(payload); {
-	case l < 1:
-		err = ErrInvalidPayload
-		return
-	case l == 1:
-		body, err = json.Marshal(payload[0])
-		if err != nil {
-			err = fmt.Errorf("marshaling event body: %w", err)
-			return
-		}
-	case l > 1:
-		body, err = json.Marshal(payload)
-		if err != nil {
-			err = fmt.Errorf("marshaling multiple event bodies: %w", err)
-			return
-		}
-	}
-	return c.appendBytes(false, "", body)
-}
-
-// AppendCheck implements Client.AppendCheck
-func (c *HTTP) AppendCheck(
-	assumedVersion string,
-	payload ...map[string]interface{},
-) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
-	if assumedVersion == "" {
-		err = errors.New("no assumed version")
-		return
-	}
-
-	var body []byte
-	switch l := len(payload); {
-	case l < 1:
-		err = ErrInvalidPayload
-		return
-	case l == 1:
-		body, err = json.Marshal(payload[0])
-		if err != nil {
-			err = fmt.Errorf("marshaling event body: %w", err)
-			return
-		}
-	case l > 1:
-		body, err = json.Marshal(payload)
-		if err != nil {
-			err = fmt.Errorf("marshaling multiple event bodies: %w", err)
-			return
-		}
-	}
-	return c.appendBytes(true, assumedVersion, body)
-}
-
-// AppendBytes implements Client.AppendCheck
-func (c *HTTP) AppendBytes(payload []byte) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
-	return c.appendBytes(false, "", payload)
-}
-
-// AppendCheckBytes implements Client.AppendCheckBytes
-func (c *HTTP) AppendCheckBytes(
-	assumedVersion string,
-	payload []byte,
-) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
-	return c.appendBytes(true, assumedVersion, payload)
-}
-
-func (c *HTTP) appendBytes(
+func (c *HTTP) AppendJSON(
+	ctx context.Context,
 	assumeVersion bool,
 	assumedVersion string,
 	payloadJSON []byte,
@@ -164,11 +78,6 @@ func (c *HTTP) appendBytes(
 	tm time.Time,
 	err error,
 ) {
-	if len(payloadJSON) < 1 {
-		err = ErrInvalidPayload
-		return
-	}
-
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -186,7 +95,12 @@ func (c *HTTP) appendBytes(
 
 	req.SetBody(payloadJSON)
 
-	if err = c.clt.Do(req, resp); err != nil {
+	if d, ok := ctx.Deadline(); ok {
+		err = c.clt.DoDeadline(req, resp, d)
+	} else {
+		err = c.clt.Do(req, resp)
+	}
+	if err != nil {
 		err = fmt.Errorf("http request: %w", err)
 		return
 	}
@@ -225,7 +139,11 @@ func (c *HTTP) appendBytes(
 }
 
 // Read implements Client.Read
+//
+// WARNING: manually cancelable (non-timeout and non-deadline) contexts
+// are not supported.
 func (c *HTTP) Read(
+	ctx context.Context,
 	offset string,
 	n uint64,
 ) ([]Event, error) {
@@ -244,7 +162,13 @@ func (c *HTTP) Read(
 		args.Set(queryArgsN, strconv.FormatUint(n, 10))
 	}
 
-	if err := c.clt.Do(req, resp); err != nil {
+	var err error
+	if d, ok := ctx.Deadline(); ok {
+		err = c.clt.DoDeadline(req, resp, d)
+	} else {
+		err = c.clt.Do(req, resp)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 
@@ -283,7 +207,7 @@ func (c *HTTP) Read(
 }
 
 // Begin implements Client.Begin
-func (c *HTTP) Begin() (string, error) {
+func (c *HTTP) Begin(ctx context.Context) (string, error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -294,7 +218,13 @@ func (c *HTTP) Begin() (string, error) {
 	req.Header.SetMethod(methodGet)
 	req.URI().SetPath(pathBegin)
 
-	if err := c.clt.Do(req, resp); err != nil {
+	var err error
+	if d, ok := ctx.Deadline(); ok {
+		err = c.clt.DoDeadline(req, resp, d)
+	} else {
+		err = c.clt.Do(req, resp)
+	}
+	if err != nil {
 		return "", fmt.Errorf("http request: %w", err)
 	}
 
@@ -316,7 +246,7 @@ func (c *HTTP) Begin() (string, error) {
 	return string(b[11 : len(b)-2]), nil
 }
 
-func (c *HTTP) Version() (string, error) {
+func (c *HTTP) Version(ctx context.Context) (string, error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -327,7 +257,13 @@ func (c *HTTP) Version() (string, error) {
 	req.Header.SetMethod(methodGet)
 	req.URI().SetPath(pathVersion)
 
-	if err := c.clt.Do(req, resp); err != nil {
+	var err error
+	if d, ok := ctx.Deadline(); ok {
+		err = c.clt.DoDeadline(req, resp, d)
+	} else {
+		err = c.clt.Do(req, resp)
+	}
+	if err != nil {
 		return "", fmt.Errorf("http request: %w", err)
 	}
 
@@ -416,7 +352,3 @@ func (c *HTTP) Listen(ctx context.Context, onUpdate func([]byte)) error {
 }
 
 var ErrSocketClosed = errors.New("socket closed")
-
-type Log interface {
-	Printf(format string, v ...interface{})
-}

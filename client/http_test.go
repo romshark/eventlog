@@ -30,7 +30,10 @@ func TestAppend(t *testing.T) {
 
 	first := s.DB.FirstOffset()
 
-	offset1, newVersion1, tm, err := s.Client.Append(Doc{"foo": "bar"})
+	offset1, newVersion1, tm, err := s.Client.Append(
+		context.Background(),
+		Doc{"foo": "bar"},
+	)
 	r.NoError(err)
 	r.Equal(first, fromHex(t, offset1))
 	r.Greater(fromHex(t, newVersion1), first)
@@ -41,6 +44,7 @@ func TestAppend(t *testing.T) {
 	r.Equal(fromHex(t, newVersion1), next)
 
 	offset2, newVersion2, tm2, err := s.Client.Append(
+		context.Background(),
 		Doc{"baz": "faz"},
 		Doc{"maz": "taz"},
 	)
@@ -62,29 +66,30 @@ func TestAppendErrInvalid(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
-	iv, err := s.Client.Version()
+	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.Append()
+	of, vr, tm, err := s.Client.Append(context.Background())
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrInvalidPayload))
 	r.Zero(of)
 	r.Zero(vr)
 	r.Zero(tm)
 
-	av, err := s.Client.Version()
+	av, err := s.Client.Version(context.Background())
 	r.NoError(err)
 	r.Equal(iv, av)
 }
 
-func TestAppendBytes(t *testing.T) {
+func TestAppendJSON(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
 	first := s.DB.FirstOffset()
 
 	// Append 1
-	offset1, newVersion1, tm, err := s.Client.AppendBytes(
+	offset1, newVersion1, tm, err := s.Client.AppendJSON(
+		context.Background(),
 		toJson(t, Doc{"foo": "bar"}),
 	)
 	r.NoError(err)
@@ -97,7 +102,8 @@ func TestAppendBytes(t *testing.T) {
 	r.Equal(fromHex(t, newVersion1), next)
 
 	// Append multiple
-	offset2, newVersion2, tm2, err := s.Client.AppendBytes(
+	offset2, newVersion2, tm2, err := s.Client.AppendJSON(
+		context.Background(),
 		toJsonArray(t, Doc{"baz": "faz"}, Doc{"maz": "taz"}),
 	)
 	r.NoError(err)
@@ -122,6 +128,7 @@ func TestAppendCheck(t *testing.T) {
 
 	// Try mismatching version
 	offset1, newVersion1, tm, err := s.Client.AppendCheck(
+		context.Background(),
 		"1",
 		Doc{"foo": "bar"},
 		Doc{"baz": "faz"},
@@ -134,6 +141,7 @@ func TestAppendCheck(t *testing.T) {
 
 	// Try matching version
 	offset1, newVersion1, tm, err = s.Client.AppendCheck(
+		context.Background(),
 		"0",
 		Doc{"foo": "bar"},
 		Doc{"baz": "faz"},
@@ -152,6 +160,7 @@ func TestAppendCheck(t *testing.T) {
 	r.Equal(fromHex(t, newVersion1), next)
 
 	offset2, newVersion2, tm2, err := s.Client.AppendCheck(
+		context.Background(),
 		newVersion1,
 		Doc{"taz": "maz"},
 		Doc{"kaz": "jaz"},
@@ -175,17 +184,17 @@ func TestAppendCheckErrInvalid(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
-	iv, err := s.Client.Version()
+	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.AppendCheck(iv)
+	of, vr, tm, err := s.Client.AppendCheck(context.Background(), iv)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrInvalidPayload))
 	r.Zero(of)
 	r.Zero(vr)
 	r.Zero(tm)
 
-	av, err := s.Client.Version()
+	av, err := s.Client.Version(context.Background())
 	r.NoError(err)
 	r.Equal(iv, av)
 }
@@ -194,29 +203,34 @@ func TestAppendCheckErrNoAssumedVersion(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
-	iv, err := s.Client.Version()
+	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.AppendCheck("", Doc{"foo": "bar"})
+	of, vr, tm, err := s.Client.AppendCheck(
+		context.Background(),
+		"",
+		Doc{"foo": "bar"},
+	)
 	r.Error(err)
 	r.Equal("no assumed version", err.Error())
 	r.Zero(of)
 	r.Zero(vr)
 	r.Zero(tm)
 
-	av, err := s.Client.Version()
+	av, err := s.Client.Version(context.Background())
 	r.NoError(err)
 	r.Equal(iv, av)
 }
 
-func TestAppendCheckBytes(t *testing.T) {
+func TestAppendCheckJSON(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
 	first := s.DB.FirstOffset()
 
 	// Try mismatching version
-	offset1, newVersion1, tm, err := s.Client.AppendCheckBytes(
+	offset1, newVersion1, tm, err := s.Client.AppendCheckJSON(
+		context.Background(),
 		"1",
 		toJsonArray(t, Doc{"foo": "bar"}, Doc{"baz": "faz"}),
 	)
@@ -227,7 +241,8 @@ func TestAppendCheckBytes(t *testing.T) {
 	r.Zero(tm)
 
 	// Try matching version
-	offset1, newVersion1, tm, err = s.Client.AppendCheckBytes(
+	offset1, newVersion1, tm, err = s.Client.AppendCheckJSON(
+		context.Background(),
 		"0",
 		toJsonArray(t, Doc{"foo": "bar"}, Doc{"baz": "faz"}),
 	)
@@ -244,7 +259,8 @@ func TestAppendCheckBytes(t *testing.T) {
 	r.NoError(err)
 	r.Equal(fromHex(t, newVersion1), next)
 
-	offset2, newVersion2, tm2, err := s.Client.AppendCheckBytes(
+	offset2, newVersion2, tm2, err := s.Client.AppendCheckJSON(
+		context.Background(),
 		newVersion1,
 		toJsonArray(t, Doc{"taz": "maz"}, Doc{"kaz": "jaz"}),
 	)
@@ -279,7 +295,10 @@ func TestRead(t *testing.T) {
 	}
 
 	// Read all
-	e, err := s.Client.Read("0", uint64(len(offsets)))
+	e, err := s.Client.Read(
+		context.Background(),
+		"0", uint64(len(offsets)),
+	)
 	r.NoError(err)
 	r.Len(e, len(offsets))
 	for i, e := range e {
@@ -289,7 +308,7 @@ func TestRead(t *testing.T) {
 	}
 
 	// Read first
-	e, err = s.Client.Read("0", 1)
+	e, err = s.Client.Read(context.Background(), "0", 1)
 	r.NoError(err)
 	r.Len(e, 1)
 	r.Equal(offsets[0], fromHex(t, e[0].Offset))
@@ -297,7 +316,11 @@ func TestRead(t *testing.T) {
 	r.Equal(map[string]interface{}{"index": float64(0)}, e[0].Payload)
 
 	// Read last 2
-	e, err = s.Client.Read(fmt.Sprintf("%x", offsets[1]), 2)
+	e, err = s.Client.Read(
+		context.Background(),
+		fmt.Sprintf("%x", offsets[1]),
+		2,
+	)
 	r.NoError(err)
 	r.Len(e, 2)
 
@@ -310,15 +333,15 @@ func TestRead(t *testing.T) {
 	r.Equal(map[string]interface{}{"index": float64(2)}, e[1].Payload)
 
 	// Read at latest version
-	v, err := s.Client.Version()
+	v, err := s.Client.Version(context.Background())
 	r.NoError(err)
-	e, err = s.Client.Read(v, 10)
+	e, err = s.Client.Read(context.Background(), v, 10)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrOffsetOutOfBound))
 	r.Len(e, 0)
 }
 
-func TestAppendBytesInvalid(t *testing.T) {
+func TestAppendJSONInvalid(t *testing.T) {
 	for _, t1 := range []struct {
 		name  string
 		input string
@@ -332,11 +355,14 @@ func TestAppendBytesInvalid(t *testing.T) {
 			s := setup(t)
 			r := require.New(t)
 
-			_, _, _, err := s.Client.AppendBytes([]byte(t1.input))
+			_, _, _, err := s.Client.AppendJSON(
+				context.Background(),
+				[]byte(t1.input),
+			)
 			r.Error(err)
 			r.True(errors.Is(err, client.ErrInvalidPayload))
 
-			v, err := s.Client.Version()
+			v, err := s.Client.Version(context.Background())
 			r.NoError(err)
 			r.Zero(fromHex(t, v))
 		})
@@ -349,15 +375,19 @@ func TestVersion(t *testing.T) {
 
 	nextExpected := "0"
 	for i := 0; i < 3; i++ {
-		v1, err := s.Client.Version()
+		v1, err := s.Client.Version(context.Background())
 		r.NoError(err)
 		r.Equal(nextExpected, v1)
 
-		_, newVersion, _, err := s.Client.AppendCheck(v1, Doc{"index": i})
+		_, newVersion, _, err := s.Client.AppendCheck(
+			context.Background(),
+			v1,
+			Doc{"index": i},
+		)
 		r.NoError(err)
 		nextExpected = newVersion
 
-		v2, err := s.Client.Version()
+		v2, err := s.Client.Version(context.Background())
 		r.NoError(err)
 		r.Equal(newVersion, v2)
 
@@ -369,15 +399,19 @@ func TestBegin(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
-	vBegin, err := s.Client.Begin()
+	vBegin, err := s.Client.Begin(context.Background())
 	r.NoError(err)
 
 	r.Equal("0", vBegin)
 
-	_, _, _, err = s.Client.AppendCheck(vBegin, Doc{"foo": "bar"})
+	_, _, _, err = s.Client.AppendCheck(
+		context.Background(),
+		vBegin,
+		Doc{"foo": "bar"},
+	)
 	r.NoError(err)
 
-	vBegin2, err := s.Client.Begin()
+	vBegin2, err := s.Client.Begin(context.Background())
 	r.NoError(err)
 	r.Equal(vBegin, vBegin2)
 }
@@ -405,7 +439,10 @@ func TestListen(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_, newVersion, _, err := s.Client.Append(Doc{"foo": "bar"})
+	_, newVersion, _, err := s.Client.Append(
+		context.Background(),
+		Doc{"foo": "bar"},
+	)
 	r.NoError(err)
 
 	r.Equal(newVersion, <-versionChan1)
@@ -435,7 +472,7 @@ func TestListenCancel(t *testing.T) {
 func setup(t *testing.T) (s struct {
 	DB     *eventlog.EventLog
 	Server *fasthttp.Server
-	Client *client.HTTP
+	Client *client.Client
 }) {
 	i, err := inmem.NewInmem()
 	require.NoError(t, err)
@@ -463,25 +500,89 @@ func setup(t *testing.T) (s struct {
 		require.NoError(t, s.Server.Serve(inMemListener))
 	}()
 
-	s.Client = client.NewHTTP(
-		log.New(os.Stderr, "ERR", log.LstdFlags),
-		&fasthttp.Client{
-			Dial: func(addr string) (net.Conn, error) {
-				return inMemListener.Dial()
+	s.Client = client.New(
+		client.NewHTTP(
+			"localhost",
+			log.New(os.Stderr, "ERR", log.LstdFlags),
+			&fasthttp.Client{
+				Dial: func(addr string) (net.Conn, error) {
+					return inMemListener.Dial()
+				},
 			},
-		},
-		&websocket.Dialer{
-			NetDialContext: func(
-				ctx context.Context,
-				network string,
-				addr string,
-			) (net.Conn, error) {
-				return inMemListener.Dial()
+			&websocket.Dialer{
+				NetDialContext: func(
+					ctx context.Context,
+					network string,
+					addr string,
+				) (net.Conn, error) {
+					return inMemListener.Dial()
+				},
 			},
-		},
-		"localhost",
+		),
 	)
 	return
+}
+
+func TestTryAppend(t *testing.T) {
+	s := setup(t)
+	r := require.New(t)
+
+	assumed, err := s.Client.Begin(context.Background())
+	r.NoError(err)
+
+	// Append
+	_, v1, _, err := s.Client.Append(
+		context.Background(),
+		Doc{"first": "1"},
+	)
+	r.NoError(err)
+
+	_, v2, _, err := s.Client.Append(
+		context.Background(),
+		Doc{"second": "2"},
+	)
+	r.NoError(err)
+
+	_, v3, _, err := s.Client.Append(
+		context.Background(),
+		Doc{"third": "3"},
+	)
+	r.NoError(err)
+
+	syncCalled := uint32(0)
+	transactionCalled := uint32(0)
+
+	offset, newVersion, tm, err := s.Client.TryAppend(
+		context.Background(),
+		assumed,
+		// Transaction
+		func() (events []map[string]interface{}, err error) {
+			atomic.AddUint32(&transactionCalled, 1)
+			return Docs{
+				Doc{"fourth": "4"},
+				Doc{"fifth": "5"},
+			}, nil
+		},
+		// Sync
+		func() (string, error) {
+			switch atomic.AddUint32(&syncCalled, 1) {
+			case 1:
+				return v1, nil
+			case 2:
+				return v2, nil
+			case 3:
+				return v3, nil
+			}
+			return "", nil
+		},
+	)
+	r.NoError(err)
+	r.Equal(v3, offset)
+	r.Greater(fromHex(t, newVersion), fromHex(t, v3))
+	r.WithinDuration(time.Now(), tm, time.Second)
+
+	r.Equal(uint32(3), atomic.LoadUint32(&syncCalled))
+	r.Equal(uint32(4), atomic.LoadUint32(&transactionCalled))
 }
 
 func scanExpect(
@@ -491,7 +592,7 @@ func scanExpect(
 	n uint64,
 	expected ...Doc,
 ) (uint64, error) {
-	actual := make([]Doc, 0, len(expected))
+	actual := make(Docs, 0, len(expected))
 	nextOffset, err := l.Scan(offset, n, func(
 		timestamp uint64,
 		payload []byte,
@@ -533,4 +634,5 @@ func toJson(t *testing.T, d Doc) []byte {
 	return b
 }
 
-type Doc map[string]interface{}
+type Doc = map[string]interface{}
+type Docs = []map[string]interface{}
