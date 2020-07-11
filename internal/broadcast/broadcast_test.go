@@ -90,3 +90,9 @@ func TestNonblockingBroadcast(t *testing.T) {
 
 	b.Broadcast(42)
 }
+
+func TestNoSub(t *testing.T) {
+	b := broadcast.New()
+	close := b.Subscribe(nil)
+	require.Nil(t, close)
+}

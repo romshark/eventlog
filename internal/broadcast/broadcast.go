@@ -33,7 +33,7 @@ func (b *Broadcast) Broadcast(value uint64) {
 // by calling unsub
 func (b *Broadcast) Subscribe(channel chan<- uint64) (unsub func()) {
 	if channel == nil {
-		channel = make(chan<- uint64)
+		return nil
 	}
 
 	b.lock.Lock()
