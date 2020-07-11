@@ -75,3 +75,18 @@ func TestCloseAll(t *testing.T) {
 	require.False(t, ok)
 	require.Zero(t, v)
 }
+
+func TestNonblockingBroadcast(t *testing.T) {
+	b := broadcast.New()
+
+	c1 := make(chan uint64, 1)
+	c2 := make(chan uint64, 1)
+
+	close := b.Subscribe(c1)
+	defer close()
+
+	close = b.Subscribe(c2)
+	defer close()
+
+	b.Broadcast(42)
+}
