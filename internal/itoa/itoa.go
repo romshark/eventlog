@@ -1,6 +1,8 @@
 package itoa
 
-import "io"
+import (
+	"io"
+)
 
 // lookup table
 var lut = []byte(
@@ -102,6 +104,7 @@ func U32toa(s io.Writer, n uint32) error {
 				return err
 			}
 		} else {
+			a = a*2 + 1
 			if _, err := s.Write(lut[a : a+1]); err != nil {
 				return err
 			}
