@@ -4,7 +4,7 @@ import (
 	"io"
 )
 
-// lookup table
+// lookup tables
 var lut = []byte(
 	"00010203040506070809" +
 		"10111213141516171819" +
@@ -17,6 +17,7 @@ var lut = []byte(
 		"80818283848586878889" +
 		"90919293949596979899",
 )
+var lutDigit = []byte("0123456789")
 
 // U32toa writes the given unsigned 32-bit integer to the given writer
 func U32toa(s io.Writer, n uint32) error {
@@ -104,8 +105,7 @@ func U32toa(s io.Writer, n uint32) error {
 				return err
 			}
 		} else {
-			a = a*2 + 1
-			if _, err := s.Write(lut[a : a+1]); err != nil {
+			if _, err := s.Write(lutDigit[a : a+1]); err != nil {
 				return err
 			}
 		}
