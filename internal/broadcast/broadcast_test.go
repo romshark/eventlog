@@ -79,8 +79,8 @@ func TestCloseAll(t *testing.T) {
 func TestNonblockingBroadcast(t *testing.T) {
 	b := broadcast.New()
 
-	c1 := make(chan uint64, 1)
-	c2 := make(chan uint64, 1)
+	c1 := make(chan uint64)
+	c2 := make(chan uint64)
 
 	close := b.Subscribe(c1)
 	defer close()
