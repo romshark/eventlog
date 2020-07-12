@@ -39,22 +39,8 @@ func (c *Client) Append(
 	err error,
 ) {
 	var body []byte
-	switch l := len(payload); {
-	case l < 1:
-		err = ErrInvalidPayload
+	if body, err = encodeJSON(payload); err != nil {
 		return
-	case l == 1:
-		body, err = json.Marshal(payload[0])
-		if err != nil {
-			err = fmt.Errorf("marshaling event body: %w", err)
-			return
-		}
-	case l > 1:
-		body, err = json.Marshal(payload)
-		if err != nil {
-			err = fmt.Errorf("marshaling multiple event bodies: %w", err)
-			return
-		}
 	}
 	return c.appendJSON(ctx, false, "", body)
 }
@@ -78,22 +64,8 @@ func (c *Client) AppendCheck(
 	}
 
 	var body []byte
-	switch l := len(payload); {
-	case l < 1:
-		err = ErrInvalidPayload
+	if body, err = encodeJSON(payload); err != nil {
 		return
-	case l == 1:
-		body, err = json.Marshal(payload[0])
-		if err != nil {
-			err = fmt.Errorf("marshaling event body: %w", err)
-			return
-		}
-	case l > 1:
-		body, err = json.Marshal(payload)
-		if err != nil {
-			err = fmt.Errorf("marshaling multiple event bodies: %w", err)
-			return
-		}
 	}
 	return c.appendJSON(ctx, true, assumedVersion, body)
 }
@@ -232,22 +204,8 @@ func (c *Client) tryAppendJSON(
 			if payload, err = t(); err != nil {
 				return
 			}
-			switch l := len(payload); {
-			case l < 1:
-				err = ErrInvalidPayload
+			if events, err = encodeJSON(payload); err != nil {
 				return
-			case l == 1:
-				events, err = json.Marshal(payload[0])
-				if err != nil {
-					err = fmt.Errorf("marshaling event body: %w", err)
-					return
-				}
-			case l > 1:
-				events, err = json.Marshal(payload)
-				if err != nil {
-					err = fmt.Errorf("marshaling multiple event bodies: %w", err)
-					return
-				}
 			}
 		case func() ([]byte, error):
 			if events, err = t(); err != nil {
@@ -317,4 +275,23 @@ type Implementer interface {
 	Version(context.Context) (string, error)
 
 	Listen(ctx context.Context, onUpdate func([]byte)) error
+}
+
+func encodeJSON(payload []map[string]interface{}) ([]byte, error) {
+	switch l := len(payload); {
+	case l < 1:
+		return nil, ErrInvalidPayload
+	case l == 1:
+		events, err := json.Marshal(payload[0])
+		if err != nil {
+			return nil, fmt.Errorf("marshaling event body: %w", err)
+		}
+		return events, nil
+	default:
+		events, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling multiple event bodies: %w", err)
+		}
+		return events, nil
+	}
 }
