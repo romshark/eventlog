@@ -27,6 +27,31 @@ func TestAppendCheckInvalidVersion(t *testing.T) {
 	r.Equal("ErrInvalidOffset", string(resp.Body()))
 }
 
+func TestAppendInvalidPayload(t *testing.T) {
+	for _, t1 := range []struct {
+		name    string
+		payload string
+	}{
+		{"primitive string", `"foo"`},
+		{"primitive number", `42`},
+		{"empty array", `[]`},
+		{"array of primitives", `["foo", "bar"]`},
+		{"syntax error in array", "[foo]"},
+	} {
+		t.Run(t1.name, func(t *testing.T) {
+			s := setup(t)
+			r := require.New(t)
+
+			resp := request(t, s, func(req *fasthttp.Request) {
+				req.URI().SetPath("/log/invalid")
+			})
+
+			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
+			r.Equal("ErrInvalidOffset", string(resp.Body()))
+		})
+	}
+}
+
 func request(
 	t *testing.T,
 	s Setup,
