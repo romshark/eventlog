@@ -30,7 +30,7 @@ jobs:
 
     # Run all tests
     - name: Test
-      run: go test ./...
+      run: go test -v -race ./...
 
     # TEST COVERAGE
 
