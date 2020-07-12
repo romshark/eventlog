@@ -22,6 +22,12 @@ func (s *Server) handleAppend(ctx *fasthttp.RequestCtx) error {
 		err        error
 	)
 
+	if len(b) < len(`{"x":0}`) {
+		ctx.SetBody(consts.StatusMsgErrInvalidPayload)
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return nil
+	}
+
 	switch b[0] {
 	case '{':
 		// Single event
