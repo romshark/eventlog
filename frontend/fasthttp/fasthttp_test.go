@@ -43,7 +43,21 @@ func TestAppendInvalidPayload(t *testing.T) {
 			r := require.New(t)
 
 			resp := request(t, s, func(req *fasthttp.Request) {
-				req.URI().SetPath("/log/invalid")
+				// Check push
+				req.URI().SetPath("/log/0")
+			})
+
+			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
+			r.Equal("ErrInvalidOffset", string(resp.Body()))
+		})
+
+		t.Run(t1.name, func(t *testing.T) {
+			s := setup(t)
+			r := require.New(t)
+
+			resp := request(t, s, func(req *fasthttp.Request) {
+				// Push
+				req.URI().SetPath("/log")
 			})
 
 			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
