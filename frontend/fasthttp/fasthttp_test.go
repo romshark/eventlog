@@ -32,6 +32,7 @@ func TestAppendInvalidPayload(t *testing.T) {
 		name    string
 		payload string
 	}{
+		{"no payload", ""},
 		{"primitive string", `"foo"`},
 		{"primitive number", `42`},
 		{"empty array", `[]`},
@@ -46,6 +47,7 @@ func TestAppendInvalidPayload(t *testing.T) {
 				// Append check
 				req.Header.SetMethod("POST")
 				req.URI().SetPath(fmt.Sprintf("/log/%x", s.DB.FirstOffset()))
+				req.SetBodyString(t1.payload)
 			})
 
 			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
@@ -60,6 +62,7 @@ func TestAppendInvalidPayload(t *testing.T) {
 				// Append
 				req.Header.SetMethod("POST")
 				req.URI().SetPath("/log/")
+				req.SetBodyString(t1.payload)
 			})
 
 			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
