@@ -582,6 +582,45 @@ func TestTryAppendTransactionErr(t *testing.T) {
 	r.Equal(uint32(1), atomic.LoadUint32(&transactionCalled))
 }
 
+func TestTryAppendSyncErr(t *testing.T) {
+	s := setup(t)
+	r := require.New(t)
+
+	assumed, err := s.Client.Begin(context.Background())
+	r.NoError(err)
+
+	_, _, _, err = s.DB.Append(toJson(t, Doc{"first": 1}))
+	r.NoError(err)
+
+	syncCalled := uint32(0)
+	transactionCalled := uint32(0)
+
+	errSyncFail := fmt.Errorf("transaction failure")
+
+	offset, newVersion, tm, err := s.Client.TryAppendJSON(
+		context.Background(),
+		assumed,
+		// Transaction
+		func() (events []byte, err error) {
+			atomic.AddUint32(&transactionCalled, 1)
+			return toJson(t, Doc{"foo": 42}), nil
+		},
+		// Sync
+		func() (string, error) {
+			atomic.AddUint32(&syncCalled, 1)
+			return "", errSyncFail
+		},
+	)
+	r.Error(err)
+	r.Equal(errSyncFail, err)
+	r.Zero(offset)
+	r.Zero(newVersion)
+	r.Zero(tm)
+
+	r.Equal(uint32(1), atomic.LoadUint32(&syncCalled))
+	r.Equal(uint32(1), atomic.LoadUint32(&transactionCalled))
+}
+
 func scanExpect(
 	t *testing.T,
 	l *eventlog.EventLog,
