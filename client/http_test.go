@@ -25,41 +25,80 @@ import (
 )
 
 func TestAppend(t *testing.T) {
-	s := setup(t)
-	r := require.New(t)
+	for _, t1 := range []struct {
+		name string
+		fn   func(*testing.T, Setup, ...Doc) (
+			offset string,
+			newVersion string,
+			tm time.Time,
+			err error,
+		)
+	}{
+		{"Append", func(t *testing.T, s Setup, d ...Doc) (
+			offset string,
+			newVersion string,
+			tm time.Time,
+			err error,
+		) {
+			return s.Client.Append(
+				context.Background(),
+				d...,
+			)
+		}},
+		{"AppendJSON", func(t *testing.T, s Setup, d ...Doc) (
+			offset string,
+			newVersion string,
+			tm time.Time,
+			err error,
+		) {
+			var b []byte
+			if len(d) == 1 {
+				b = toJson(t, d[0])
+			} else {
+				b = toJsonArray(t, d...)
+			}
+			return s.Client.AppendJSON(context.Background(), b)
+		}},
+	} {
+		t.Run(t1.name, func(t *testing.T) {
+			s := setup(t)
+			r := require.New(t)
 
-	first := s.DB.FirstOffset()
+			first := s.DB.FirstOffset()
 
-	offset1, newVersion1, tm, err := s.Client.Append(
-		context.Background(),
-		Doc{"foo": "bar"},
-	)
-	r.NoError(err)
-	r.Equal(first, fromHex(t, offset1))
-	r.Greater(fromHex(t, newVersion1), first)
-	r.WithinDuration(time.Now(), tm, time.Second)
+			// Append 1
+			offset1, newVersion1, tm, err := t1.fn(
+				t, s,
+				Doc{"foo": "bar"},
+			)
+			r.NoError(err)
+			r.Equal(first, fromHex(t, offset1))
+			r.Greater(fromHex(t, newVersion1), first)
+			r.WithinDuration(time.Now(), tm, time.Second)
 
-	next, err := scanExpect(t, s.DB, first, 10, Doc{"foo": "bar"})
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion1), next)
+			next, err := scanExpect(t, s.DB, first, 10, Doc{"foo": "bar"})
+			r.NoError(err)
+			r.Equal(fromHex(t, newVersion1), next)
 
-	offset2, newVersion2, tm2, err := s.Client.Append(
-		context.Background(),
-		Doc{"baz": "faz"},
-		Doc{"maz": "taz"},
-	)
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
-	r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
-	r.WithinDuration(time.Now(), tm2, time.Second)
+			// Append multiple
+			offset2, newVersion2, tm2, err := t1.fn(
+				t, s,
+				Doc{"baz": "faz"}, Doc{"maz": "taz"},
+			)
+			r.NoError(err)
+			r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
+			r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
+			r.WithinDuration(time.Now(), tm2, time.Second)
 
-	next, err = scanExpect(t, s.DB, first, 10,
-		Doc{"foo": "bar"},
-		Doc{"baz": "faz"},
-		Doc{"maz": "taz"},
-	)
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion2), next)
+			next, err = scanExpect(t, s.DB, first, 10,
+				Doc{"foo": "bar"},
+				Doc{"baz": "faz"},
+				Doc{"maz": "taz"},
+			)
+			r.NoError(err)
+			r.Equal(fromHex(t, newVersion2), next)
+		})
+	}
 }
 
 func TestAppendErrInvalid(t *testing.T) {
@@ -69,7 +108,7 @@ func TestAppendErrInvalid(t *testing.T) {
 	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.Append(context.Background())
+	of, vr, tm, err := s.Client.Append(context.Background() /* no events */)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrInvalidPayload))
 	r.Zero(of)
@@ -79,45 +118,6 @@ func TestAppendErrInvalid(t *testing.T) {
 	av, err := s.Client.Version(context.Background())
 	r.NoError(err)
 	r.Equal(iv, av)
-}
-
-func TestAppendJSON(t *testing.T) {
-	s := setup(t)
-	r := require.New(t)
-
-	first := s.DB.FirstOffset()
-
-	// Append 1
-	offset1, newVersion1, tm, err := s.Client.AppendJSON(
-		context.Background(),
-		toJson(t, Doc{"foo": "bar"}),
-	)
-	r.NoError(err)
-	r.Equal(first, fromHex(t, offset1))
-	r.Greater(fromHex(t, newVersion1), first)
-	r.WithinDuration(time.Now(), tm, time.Second)
-
-	next, err := scanExpect(t, s.DB, first, 10, Doc{"foo": "bar"})
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion1), next)
-
-	// Append multiple
-	offset2, newVersion2, tm2, err := s.Client.AppendJSON(
-		context.Background(),
-		toJsonArray(t, Doc{"baz": "faz"}, Doc{"maz": "taz"}),
-	)
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
-	r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
-	r.WithinDuration(time.Now(), tm2, time.Second)
-
-	next, err = scanExpect(t, s.DB, first, 10,
-		Doc{"foo": "bar"},
-		Doc{"baz": "faz"},
-		Doc{"maz": "taz"},
-	)
-	r.NoError(err)
-	r.Equal(fromHex(t, newVersion2), next)
 }
 
 func TestAppendCheck(t *testing.T) {
@@ -469,11 +469,13 @@ func TestListenCancel(t *testing.T) {
 	r.Zero(atomic.LoadUint32(&versionTriggered))
 }
 
-func setup(t *testing.T) (s struct {
+type Setup struct {
 	DB     *eventlog.EventLog
 	Server *fasthttp.Server
 	Client *client.Client
-}) {
+}
+
+func setup(t *testing.T) (s Setup) {
 	i, err := inmem.NewInmem()
 	require.NoError(t, err)
 
