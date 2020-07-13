@@ -485,134 +485,65 @@ func setup(t *testing.T) (s Setup) {
 }
 
 func TestTryAppend(t *testing.T) {
-	type Env struct {
-		c                 *client.Client
-		assumed           string
-		v1, v2, v3        string
-		transactionCalled *uint32
-		syncCalled        *uint32
-	}
+	s := setup(t)
+	r := require.New(t)
 
-	for _, t1 := range []struct {
-		method string
-		fn     func(e Env) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		)
-	}{
-		{"TryAppend", func(e Env) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		) {
-			return e.c.TryAppendJSON(
-				context.Background(),
-				e.assumed,
-				// Transaction
-				func() (events []byte, err error) {
-					atomic.AddUint32(e.transactionCalled, 1)
-					return toJsonArray(t,
-						Doc{"fourth": "4"},
-						Doc{"fifth": "5"},
-					), nil
-				},
-				// Sync
-				func() (string, error) {
-					switch atomic.AddUint32(e.syncCalled, 1) {
-					case 1:
-						return e.v1, nil
-					case 2:
-						return e.v2, nil
-					case 3:
-						return e.v3, nil
-					}
-					return "", nil
-				},
-			)
-		}},
-		{"TryAppendJSON", func(e Env) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		) {
-			return e.c.TryAppendJSON(
-				context.Background(),
-				e.assumed,
-				// Transaction
-				func() (events []byte, err error) {
-					atomic.AddUint32(e.transactionCalled, 1)
-					return toJsonArray(t,
-						Doc{"fourth": "4"},
-						Doc{"fifth": "5"},
-					), nil
-				},
-				// Sync
-				func() (string, error) {
-					switch atomic.AddUint32(e.syncCalled, 1) {
-					case 1:
-						return e.v1, nil
-					case 2:
-						return e.v2, nil
-					case 3:
-						return e.v3, nil
-					}
-					return "", nil
-				},
-			)
-		}},
-	} {
-		t.Run(t1.method, func(t *testing.T) {
-			s := setup(t)
-			r := require.New(t)
+	assumed, err := s.Client.Begin(context.Background())
+	r.NoError(err)
 
-			assumed, err := s.Client.Begin(context.Background())
-			r.NoError(err)
+	// Append
+	_, v1, _, err := s.Client.AppendJSON(
+		context.Background(),
+		toJson(t, Doc{"first": "1"}),
+	)
+	r.NoError(err)
 
-			// Append
-			_, v1, _, err := s.Client.AppendJSON(
-				context.Background(),
-				toJson(t, Doc{"first": "1"}),
-			)
-			r.NoError(err)
+	_, v2, _, err := s.Client.AppendJSON(
+		context.Background(),
+		toJson(t, Doc{"second": "2"}),
+	)
+	r.NoError(err)
 
-			_, v2, _, err := s.Client.AppendJSON(
-				context.Background(),
-				toJson(t, Doc{"second": "2"}),
-			)
-			r.NoError(err)
+	_, v3, _, err := s.Client.AppendJSON(
+		context.Background(),
+		toJson(t, Doc{"third": "3"}),
+	)
+	r.NoError(err)
 
-			_, v3, _, err := s.Client.AppendJSON(
-				context.Background(),
-				toJson(t, Doc{"third": "3"}),
-			)
-			r.NoError(err)
+	syncCalled := uint32(0)
+	transactionCalled := uint32(0)
 
-			syncCalled := uint32(0)
-			transactionCalled := uint32(0)
+	offset, newVersion, tm, err := s.Client.TryAppendJSON(
+		context.Background(),
+		assumed,
+		// Transaction
+		func() (events []byte, err error) {
+			atomic.AddUint32(&transactionCalled, 1)
+			return toJsonArray(t,
+				Doc{"fourth": "4"},
+				Doc{"fifth": "5"},
+			), nil
+		},
+		// Sync
+		func() (string, error) {
+			switch atomic.AddUint32(&syncCalled, 1) {
+			case 1:
+				return v1, nil
+			case 2:
+				return v2, nil
+			case 3:
+				return v3, nil
+			}
+			return "", nil
+		},
+	)
+	r.NoError(err)
+	r.Equal(v3, offset)
+	r.Greater(fromHex(t, newVersion), fromHex(t, v3))
+	r.WithinDuration(time.Now(), tm, time.Second)
 
-			offset, newVersion, tm, err := t1.fn(Env{
-				c:                 s.Client,
-				assumed:           assumed,
-				v1:                v1,
-				v2:                v2,
-				v3:                v3,
-				syncCalled:        &syncCalled,
-				transactionCalled: &transactionCalled,
-			})
-			r.NoError(err)
-			r.Equal(v3, offset)
-			r.Greater(fromHex(t, newVersion), fromHex(t, v3))
-			r.WithinDuration(time.Now(), tm, time.Second)
-
-			r.Equal(uint32(3), atomic.LoadUint32(&syncCalled))
-			r.Equal(uint32(4), atomic.LoadUint32(&transactionCalled))
-		})
-	}
-
+	r.Equal(uint32(3), atomic.LoadUint32(&syncCalled))
+	r.Equal(uint32(4), atomic.LoadUint32(&transactionCalled))
 }
 
 func scanExpect(
