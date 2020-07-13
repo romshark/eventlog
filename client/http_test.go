@@ -25,80 +25,42 @@ import (
 )
 
 func TestAppend(t *testing.T) {
-	for _, t1 := range []struct {
-		name string
-		fn   func(*testing.T, Setup, ...Doc) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		)
-	}{
-		{"Append", func(t *testing.T, s Setup, d ...Doc) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		) {
-			return s.Client.Append(
-				context.Background(),
-				d...,
-			)
-		}},
-		{"AppendJSON", func(t *testing.T, s Setup, d ...Doc) (
-			offset string,
-			newVersion string,
-			tm time.Time,
-			err error,
-		) {
-			var b []byte
-			if len(d) == 1 {
-				b = toJson(t, d[0])
-			} else {
-				b = toJsonArray(t, d...)
-			}
-			return s.Client.AppendJSON(context.Background(), b)
-		}},
-	} {
-		t.Run(t1.name, func(t *testing.T) {
-			s := setup(t)
-			r := require.New(t)
+	s := setup(t)
+	r := require.New(t)
 
-			first := s.DB.FirstOffset()
+	first := s.DB.FirstOffset()
 
-			// Append 1
-			offset1, newVersion1, tm, err := t1.fn(
-				t, s,
-				Doc{"foo": "bar"},
-			)
-			r.NoError(err)
-			r.Equal(first, fromHex(t, offset1))
-			r.Greater(fromHex(t, newVersion1), first)
-			r.WithinDuration(time.Now(), tm, time.Second)
+	// Append 1
+	offset1, newVersion1, tm, err := s.Client.AppendJSON(
+		context.Background(),
+		toJson(t, Doc{"foo": "bar"}),
+	)
+	r.NoError(err)
+	r.Equal(first, fromHex(t, offset1))
+	r.Greater(fromHex(t, newVersion1), first)
+	r.WithinDuration(time.Now(), tm, time.Second)
 
-			next, err := scanExpect(t, s.DB, first, 10, Doc{"foo": "bar"})
-			r.NoError(err)
-			r.Equal(fromHex(t, newVersion1), next)
+	next, err := scanExpect(t, s.DB, first, 10, Doc{"foo": "bar"})
+	r.NoError(err)
+	r.Equal(fromHex(t, newVersion1), next)
 
-			// Append multiple
-			offset2, newVersion2, tm2, err := t1.fn(
-				t, s,
-				Doc{"baz": "faz"}, Doc{"maz": "taz"},
-			)
-			r.NoError(err)
-			r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
-			r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
-			r.WithinDuration(time.Now(), tm2, time.Second)
+	// Append multiple
+	offset2, newVersion2, tm2, err := s.Client.AppendJSON(
+		context.Background(),
+		toJsonArray(t, Doc{"baz": "faz"}, Doc{"maz": "taz"}),
+	)
+	r.NoError(err)
+	r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
+	r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
+	r.WithinDuration(time.Now(), tm2, time.Second)
 
-			next, err = scanExpect(t, s.DB, first, 10,
-				Doc{"foo": "bar"},
-				Doc{"baz": "faz"},
-				Doc{"maz": "taz"},
-			)
-			r.NoError(err)
-			r.Equal(fromHex(t, newVersion2), next)
-		})
-	}
+	next, err = scanExpect(t, s.DB, first, 10,
+		Doc{"foo": "bar"},
+		Doc{"baz": "faz"},
+		Doc{"maz": "taz"},
+	)
+	r.NoError(err)
+	r.Equal(fromHex(t, newVersion2), next)
 }
 
 func TestAppendErrInvalid(t *testing.T) {
@@ -108,7 +70,7 @@ func TestAppendErrInvalid(t *testing.T) {
 	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.Append(context.Background() /* no events */)
+	of, vr, tm, err := s.Client.AppendJSON(context.Background(), nil)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrInvalidPayload))
 	r.Zero(of)
@@ -127,11 +89,10 @@ func TestAppendCheck(t *testing.T) {
 	first := s.DB.FirstOffset()
 
 	// Try mismatching version
-	offset1, newVersion1, tm, err := s.Client.AppendCheck(
+	offset1, newVersion1, tm, err := s.Client.AppendCheckJSON(
 		context.Background(),
 		"1",
-		Doc{"foo": "bar"},
-		Doc{"baz": "faz"},
+		toJsonArray(t, Doc{"foo": "bar"}, Doc{"baz": "faz"}),
 	)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrMismatchingVersions))
@@ -140,11 +101,10 @@ func TestAppendCheck(t *testing.T) {
 	r.Zero(tm)
 
 	// Try matching version
-	offset1, newVersion1, tm, err = s.Client.AppendCheck(
+	offset1, newVersion1, tm, err = s.Client.AppendCheckJSON(
 		context.Background(),
 		"0",
-		Doc{"foo": "bar"},
-		Doc{"baz": "faz"},
+		toJsonArray(t, Doc{"foo": "bar"}, Doc{"baz": "faz"}),
 	)
 	r.NoError(err)
 	r.Equal(first, fromHex(t, offset1))
@@ -159,11 +119,10 @@ func TestAppendCheck(t *testing.T) {
 	r.NoError(err)
 	r.Equal(fromHex(t, newVersion1), next)
 
-	offset2, newVersion2, tm2, err := s.Client.AppendCheck(
+	offset2, newVersion2, tm2, err := s.Client.AppendCheckJSON(
 		context.Background(),
 		newVersion1,
-		Doc{"taz": "maz"},
-		Doc{"kaz": "jaz"},
+		toJsonArray(t, Doc{"taz": "maz"}, Doc{"kaz": "jaz"}),
 	)
 	r.NoError(err)
 	r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
@@ -187,7 +146,7 @@ func TestAppendCheckErrInvalid(t *testing.T) {
 	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.AppendCheck(context.Background(), iv)
+	of, vr, tm, err := s.Client.AppendCheckJSON(context.Background(), iv, nil)
 	r.Error(err)
 	r.True(errors.Is(err, client.ErrInvalidPayload))
 	r.Zero(of)
@@ -206,13 +165,13 @@ func TestAppendCheckErrNoAssumedVersion(t *testing.T) {
 	iv, err := s.Client.Version(context.Background())
 	r.NoError(err)
 
-	of, vr, tm, err := s.Client.AppendCheck(
+	of, vr, tm, err := s.Client.AppendCheckJSON(
 		context.Background(),
 		"",
-		Doc{"foo": "bar"},
+		toJson(t, Doc{"foo": "bar"}),
 	)
 	r.Error(err)
-	r.Equal("no assumed version", err.Error())
+	r.True(errors.Is(err, client.ErrInvalidVersion))
 	r.Zero(of)
 	r.Zero(vr)
 	r.Zero(tm)
@@ -379,10 +338,10 @@ func TestVersion(t *testing.T) {
 		r.NoError(err)
 		r.Equal(nextExpected, v1)
 
-		_, newVersion, _, err := s.Client.AppendCheck(
+		_, newVersion, _, err := s.Client.AppendCheckJSON(
 			context.Background(),
 			v1,
-			Doc{"index": i},
+			toJson(t, Doc{"index": i}),
 		)
 		r.NoError(err)
 		nextExpected = newVersion
@@ -404,10 +363,10 @@ func TestBegin(t *testing.T) {
 
 	r.Equal("0", vBegin)
 
-	_, _, _, err = s.Client.AppendCheck(
+	_, _, _, err = s.Client.AppendCheckJSON(
 		context.Background(),
 		vBegin,
-		Doc{"foo": "bar"},
+		toJson(t, Doc{"foo": "bar"}),
 	)
 	r.NoError(err)
 
@@ -439,9 +398,9 @@ func TestListen(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	_, newVersion, _, err := s.Client.Append(
+	_, newVersion, _, err := s.Client.AppendJSON(
 		context.Background(),
-		Doc{"foo": "bar"},
+		toJson(t, Doc{"foo": "bar"}),
 	)
 	r.NoError(err)
 
@@ -549,16 +508,16 @@ func TestTryAppend(t *testing.T) {
 			tm time.Time,
 			err error,
 		) {
-			return e.c.TryAppend(
+			return e.c.TryAppendJSON(
 				context.Background(),
 				e.assumed,
 				// Transaction
-				func() (events []map[string]interface{}, err error) {
+				func() (events []byte, err error) {
 					atomic.AddUint32(e.transactionCalled, 1)
-					return Docs{
+					return toJsonArray(t,
 						Doc{"fourth": "4"},
 						Doc{"fifth": "5"},
-					}, nil
+					), nil
 				},
 				// Sync
 				func() (string, error) {
@@ -614,21 +573,21 @@ func TestTryAppend(t *testing.T) {
 			r.NoError(err)
 
 			// Append
-			_, v1, _, err := s.Client.Append(
+			_, v1, _, err := s.Client.AppendJSON(
 				context.Background(),
-				Doc{"first": "1"},
+				toJson(t, Doc{"first": "1"}),
 			)
 			r.NoError(err)
 
-			_, v2, _, err := s.Client.Append(
+			_, v2, _, err := s.Client.AppendJSON(
 				context.Background(),
-				Doc{"second": "2"},
+				toJson(t, Doc{"second": "2"}),
 			)
 			r.NoError(err)
 
-			_, v3, _, err := s.Client.Append(
+			_, v3, _, err := s.Client.AppendJSON(
 				context.Background(),
-				Doc{"third": "3"},
+				toJson(t, Doc{"third": "3"}),
 			)
 			r.NoError(err)
 
@@ -663,7 +622,7 @@ func scanExpect(
 	n uint64,
 	expected ...Doc,
 ) (uint64, error) {
-	actual := make(Docs, 0, len(expected))
+	actual := make([]Doc, 0, len(expected))
 	nextOffset, err := l.Scan(offset, n, func(
 		timestamp uint64,
 		payload []byte,
@@ -705,5 +664,4 @@ func toJson(t *testing.T, d Doc) []byte {
 	return b
 }
 
-type Doc = map[string]interface{}
-type Docs = []map[string]interface{}
+type Doc map[string]interface{}
