@@ -31,7 +31,7 @@ func newBenchmarkSetup(b *testing.B) (clt *client.Client, teardown func()) {
 		time.Now().Format(time.RFC3339Nano),
 	)
 
-	l, err := evfile.NewFile(fileName)
+	l, err := evfile.New(fileName)
 	panicOnErr(err)
 
 	ln := fasthttputil.NewInmemoryListener()

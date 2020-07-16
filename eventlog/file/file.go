@@ -21,9 +21,9 @@ const (
 	fileHeaderLen  = 4
 	entryHeaderLen = 16
 
-	maxPayloadLen         = 1024 * 1024 // 1 MiB
-	minPossiblePayloadLen = 7           // {"x":0}
-	minEntryLen           = entryHeaderLen + minPossiblePayloadLen
+	MaxPayloadLen = 1024 * 1024 // 1 MiB
+	MinPayloadLen = 7           // {"x":0}
+	minEntryLen   = entryHeaderLen + MinPayloadLen
 )
 
 // Make sure *File implements eventlog.Implementer
@@ -38,8 +38,8 @@ type File struct {
 	tailOffset uint64
 }
 
-// NewFile returns a new persistent file-based event log instance
-func NewFile(filePath string) (*File, error) {
+// New returns a new persistent file-based event log instance
+func New(filePath string) (*File, error) {
 	file, err := os.OpenFile(
 		filePath,
 		os.O_CREATE|os.O_RDWR|os.O_SYNC,
@@ -54,50 +54,40 @@ func NewFile(filePath string) (*File, error) {
 		file:       file,
 		tailOffset: fileHeaderLen,
 	}
-	f.bufPool = bufpool.NewPool(maxPayloadLen)
+	f.bufPool = bufpool.NewPool(MaxPayloadLen)
 
 	b := f.bufPool.Get()
 	defer b.Release()
 	buf := b.Bytes()
 
-	if err := f.checkVersion(buf); errors.Is(err, io.EOF) {
-		// New file, write header
-		bufUint32 := buf[:4]
-		binary.LittleEndian.PutUint32(bufUint32, SupportedProtoVersion)
-		if _, err := f.file.Write(bufUint32); err != nil {
-			return nil, fmt.Errorf(
-				"writing header version: %w",
-				err,
-			)
+	switch err := readHeader(f.file, buf); err {
+	case io.EOF:
+		if err := f.writeFileHeader(buf); err != nil {
+			return nil, err
 		}
-	} else if err != nil {
+	case nil:
+	default:
 		return nil, err
 	}
 
 	return f, nil
 }
 
-func (f *File) checkVersion(buf []byte) error {
+func (f *File) writeFileHeader(buf []byte) error {
+	// New file, write header
 	bufUint32 := buf[:4]
-	if _, err := f.file.ReadAt(bufUint32, 0); err != nil {
-		return err
+	binary.LittleEndian.PutUint32(bufUint32, SupportedProtoVersion)
+	if _, err := f.file.Write(bufUint32); err != nil {
+		return fmt.Errorf("writing header version: %w", err)
 	}
-
-	actual := binary.LittleEndian.Uint32(buf)
-	if SupportedProtoVersion != actual {
-		return fmt.Errorf(
-			"unsupported file version (%d)",
-			actual,
-		)
-	}
-
 	return nil
 }
 
 // read returns io.EOF when there's nothing more to read
 //
 // WARNING: pl []byte references the given buffer
-func (f *File) read(
+func readEntry(
+	reader reader,
 	buf []byte,
 	offset int64,
 ) (
@@ -113,7 +103,7 @@ func (f *File) read(
 	buf4 := buf[:4]
 
 	// Read timestamp (8 bytes)
-	n, err = f.file.ReadAt(buf8, offset)
+	n, err = reader.ReadAt(buf8, offset)
 	switch {
 	case errors.Is(err, io.EOF):
 		return
@@ -136,7 +126,7 @@ func (f *File) read(
 	tm = binary.LittleEndian.Uint64(buf8)
 
 	// Read payload hash (8 bytes, xxhash64)
-	n, err = f.file.ReadAt(buf8, offset+8)
+	n, err = reader.ReadAt(buf8, offset+8)
 	if err != nil {
 		err = fmt.Errorf(
 			"reading payload hash at offset %d: %w",
@@ -156,7 +146,7 @@ func (f *File) read(
 	payloadHash = binary.LittleEndian.Uint64(buf8)
 
 	// Read payload len
-	n, err = f.file.ReadAt(buf4, offset+16)
+	n, err = reader.ReadAt(buf4, offset+16)
 	if err != nil {
 		err = fmt.Errorf(
 			"reading payload length at offset %d: %w",
@@ -176,7 +166,7 @@ func (f *File) read(
 
 	// Check payload length
 	payloadLen := binary.LittleEndian.Uint32(buf4)
-	if payloadLen < minPossiblePayloadLen || payloadLen > maxPayloadLen {
+	if payloadLen < MinPayloadLen || payloadLen > MaxPayloadLen {
 		// Invalid payload length indicates wrong offset
 		err = eventlog.ErrInvalidOffset
 		return
@@ -184,7 +174,7 @@ func (f *File) read(
 
 	// Read payload
 	pl = buf[:payloadLen]
-	n, err = f.file.ReadAt(pl, offset+20)
+	n, err = reader.ReadAt(pl, offset+20)
 	if err != nil {
 		err = fmt.Errorf(
 			"reading payload at offset %d: %w",
@@ -195,7 +185,7 @@ func (f *File) read(
 	}
 	if n != len(pl) {
 		err = fmt.Errorf(
-			"reading payload length (expected: %d; read: %d)",
+			"reading payload (expected: %d; read: %d)",
 			len(pl),
 			n,
 		)
@@ -266,7 +256,7 @@ func (f *File) Scan(
 
 		var r uint64
 		for i, r = int64(offset), uint64(0); r < n; r++ {
-			n, tm, pl, err := f.read(buf, i)
+			n, tm, pl, err := readEntry(f.file, buf, i)
 			if err == io.EOF {
 				break
 			} else if err != nil {
@@ -283,7 +273,7 @@ func (f *File) Scan(
 			if offset >= f.tailOffset {
 				break
 			}
-			n, tm, pl, err := f.read(buf, i)
+			n, tm, pl, err := readEntry(f.file, buf, i)
 			if err == io.EOF {
 				break
 			} else if err != nil {
@@ -476,4 +466,32 @@ func (f *File) writeLog(
 	f.tailOffset += uint64(20) + uint64(len(payload))
 
 	return wrote, nil
+}
+
+func readHeader(
+	reader reader,
+	buf []byte,
+) error {
+	buf4 := buf[:4]
+	n, err := reader.ReadAt(buf4, 0)
+	if err != nil {
+		return err
+	}
+	if n != 4 {
+		return fmt.Errorf(
+			"reading version header (expected: 4, actual: %d)", n,
+		)
+	}
+	return checkVersion(binary.LittleEndian.Uint32(buf4))
+}
+
+func checkVersion(version uint32) error {
+	if version != SupportedProtoVersion {
+		return fmt.Errorf("unsupported file version (%d)", version)
+	}
+	return nil
+}
+
+type reader interface {
+	ReadAt(buf []byte, offset int64) (read int, err error)
 }

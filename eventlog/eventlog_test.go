@@ -396,7 +396,7 @@ func TestFile(t *testing.T) {
 			time.Now().Format(time.RFC3339Nano),
 		)
 
-		l, err := enginefile.NewFile(filePath)
+		l, err := enginefile.New(filePath)
 		require.NoError(t, err)
 		require.NotNil(t, l)
 

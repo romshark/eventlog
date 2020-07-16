@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/romshark/eventlog/eventlog"
 	enginefile "github.com/romshark/eventlog/eventlog/file"
@@ -35,6 +37,11 @@ var (
 		"./eventlog.db",
 		"event storage file path",
 	)
+	flagCheckIntegrity = flag.Bool(
+		"check-integrity",
+		false,
+		"perform file integrity check on launch",
+	)
 )
 
 func main() {
@@ -42,6 +49,9 @@ func main() {
 
 	logInfo := log.New(os.Stdout, "", log.LstdFlags)
 	logErr := log.New(os.Stderr, "ERR", log.LstdFlags)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
 
 	// Initialize the event log engine
 	var eventLogImpl eventlog.Implementer
@@ -53,11 +63,71 @@ func main() {
 			logErr.Fatal(err)
 		}
 	case engineFile:
-		eventLogImpl, err = enginefile.NewFile(*flagStoreFilePath)
+		func() {
+			if !*flagCheckIntegrity {
+				// Skip file integrity check
+				return
+			}
+
+			var fileSize int64
+			if info, err := os.Stat(*flagStoreFilePath); os.IsNotExist(err) {
+				// File doesn't exist, skip check
+				return
+			} else if err != nil {
+				logErr.Fatalf("reading source file info: %s", err)
+			} else {
+				fileSize = info.Size()
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			go func() {
+				select {
+				case <-stop:
+					// Cancel integrity check
+					cancel()
+					logInfo.Println("canceling integrity check")
+				case <-ctx.Done():
+				}
+			}()
+
+			fl, err := os.OpenFile(*flagStoreFilePath, os.O_RDONLY, 0644)
+			if err != nil {
+				logErr.Fatalf("opening file for integrity check: %s", err)
+			}
+			defer fl.Close()
+
+			if err := enginefile.CheckIntegrity(
+				ctx,
+				fl,
+				nil,
+				func(
+					timestamp uint64,
+					payload []byte,
+					offset int64,
+				) error {
+					// Integrity check progress
+					logInfo.Printf(
+						"%.2f: Valid entry (time: %s, length: %d) at offset %d",
+						float64(offset)/float64(fileSize)*100,
+						time.Unix(int64(timestamp), 0),
+						len(payload),
+						offset,
+					)
+					return nil
+				},
+			); err != nil {
+				logErr.Fatalf("checking file integrity: %s", err)
+			}
+		}()
+
+		eventLogImpl, err = enginefile.New(*flagStoreFilePath)
 		if err != nil {
 			logErr.Fatal(err)
 		}
 		defer eventLogImpl.(*enginefile.File).Close()
+
 	default:
 		logErr.Fatalf("unsupported engine %q", *flagStoreEngine)
 	}
@@ -71,8 +141,6 @@ func main() {
 	}
 
 	// Launch server
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
 	go func() {
 		logInfo.Printf("listening on %s", *flagAPIHTTP)
 		if err := httpServer.ListenAndServe(*flagAPIHTTP); err != nil {

@@ -26,7 +26,7 @@ func TestChecksum(t *testing.T) {
 		}
 	})
 
-	l, err := file.NewFile(filePath)
+	l, err := file.New(filePath)
 	require.NoError(t, err)
 	require.NotNil(t, l)
 
