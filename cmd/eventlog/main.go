@@ -58,10 +58,7 @@ func main() {
 	var err error
 	switch *flagStoreEngine {
 	case engineInmem:
-		eventLogImpl, err = engineinmem.NewInmem()
-		if err != nil {
-			logErr.Fatal(err)
-		}
+		eventLogImpl = engineinmem.New()
 	case engineFile:
 		func() {
 			if !*flagCheckIntegrity {

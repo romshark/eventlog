@@ -375,10 +375,7 @@ func TestInmem(t *testing.T) {
 		impl eventlog.Implementer,
 		cleanUp func(t *testing.T),
 	) {
-		l, err := engineinmem.NewInmem()
-		require.NoError(t, err)
-		require.NotNil(t, l)
-		impl = l
+		impl = engineinmem.New()
 		cleanUp = func(t *testing.T) {}
 		return
 	})

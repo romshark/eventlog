@@ -96,10 +96,7 @@ type Setup struct {
 }
 
 func setup(t *testing.T) (s Setup) {
-	i, err := inmem.NewInmem()
-	require.NoError(t, err)
-
-	s.DB = eventlog.New(i)
+	s.DB = eventlog.New(inmem.New())
 	t.Cleanup(func() {
 		if err := s.DB.Close(); err != nil {
 			panic(fmt.Errorf("closing eventlog: %s", err))

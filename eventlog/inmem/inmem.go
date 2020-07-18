@@ -31,9 +31,9 @@ type Inmem struct {
 	store []inmemEvent
 }
 
-// NewInmem returns a new volatile in-memory event log instance
-func NewInmem() (*Inmem, error) {
-	return &Inmem{}, nil
+// New returns a new volatile in-memory event log instance
+func New() *Inmem {
+	return &Inmem{}
 }
 
 func (l *Inmem) Version() uint64 {
