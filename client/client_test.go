@@ -26,6 +26,7 @@ import (
 
 func test(t *testing.T, f func(s Setup)) {
 	t.Run("HTTP", func(t *testing.T) { f(setupHTTP(t)) })
+	t.Run("Inmem", func(t *testing.T) { f(setupInmem(t)) })
 }
 
 func TestAppend(t *testing.T) {
@@ -720,3 +721,14 @@ func setupHTTP(t *testing.T) (s Setup) {
 	return
 }
 
+func setupInmem(t *testing.T) (s Setup) {
+	s.DB = eventlog.New(inmem.New())
+	t.Cleanup(func() {
+		if err := s.DB.Close(); err != nil {
+			panic(fmt.Errorf("closing eventlog: %s", err))
+		}
+	})
+
+	s.Client = client.New(client.NewInmem(s.DB))
+	return
+}
