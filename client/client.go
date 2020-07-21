@@ -89,7 +89,10 @@ func (c *Client) Scan(
 	limit uint,
 	onEvent func(e Event) error,
 ) error {
-	for i := uint(0); i < limit; i++ {
+	for i := uint(0); ; i++ {
+		if limit > 0 && i >= limit {
+			break
+		}
 		e, err := c.impl.Read(ctx, version)
 		if err != nil {
 			return err
