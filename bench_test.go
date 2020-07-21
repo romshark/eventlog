@@ -126,11 +126,11 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 	clt, teardown := newBenchmarkSetup(b)
 	defer teardown()
 
-	const numEvents = 1000
+	const numEvents = uint(1000)
 
 	var offset string
 
-	for i := 0; i < numEvents; i++ {
+	for i := uint(0); i < numEvents; i++ {
 		o, _, _, err := clt.AppendJSON(context.Background(), []byte(`{
 			"example": "benchmark",
 			"foo": null,
@@ -144,11 +144,21 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 		}
 	}
 
+	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
-		events, err := clt.Read(context.Background(), offset, 0)
-		if len(events) != numEvents {
-			panic(fmt.Errorf("unexpected number of events: %d", len(events)))
+		counter := uint(0)
+		panicOnErr(clt.Scan(
+			context.Background(),
+			offset,
+			numEvents,
+			func(e client.Event) error {
+				counter++
+				return nil
+			},
+		))
+		if counter != numEvents {
+			panic(fmt.Errorf("unexpected number of events: %d", counter))
 		}
-		panicOnErr(err)
 	}
 }

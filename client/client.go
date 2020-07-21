@@ -10,9 +10,10 @@ import (
 
 // Event represents a logged event
 type Event struct {
-	Offset  string                 `json:"offset"`
-	Time    time.Time              `json:"time"`
-	Payload map[string]interface{} `json:"payload"`
+	Offset  string    `json:"offset"`
+	Time    time.Time `json:"time"`
+	Payload []byte    `json:"payload"`
+	Next    string    `json:"next"`
 }
 
 type Client struct {
@@ -80,13 +81,36 @@ func (c *Client) appendJSON(
 	return c.impl.AppendJSON(ctx, assumeVersion, assumedVersion, payloadJSON)
 }
 
-// Read reads n number of events from (including) the given version
+// Scan reads a limited number of events at the given offset version
+// calling the onEvent callback for every received event
+func (c *Client) Scan(
+	ctx context.Context,
+	version string,
+	limit uint,
+	onEvent func(e Event) error,
+) error {
+	for i := uint(0); i < limit; i++ {
+		e, err := c.impl.Read(ctx, version)
+		if err != nil {
+			return err
+		}
+		if err := onEvent(e); err != nil {
+			return err
+		}
+		if e.Next == "" {
+			break
+		}
+		version = e.Next
+	}
+	return nil
+}
+
+// Read reads an event at the given offset version
 func (c *Client) Read(
 	ctx context.Context,
 	version string,
-	n uint64,
-) ([]Event, error) {
-	return c.impl.Read(ctx, version, n)
+) (Event, error) {
+	return c.impl.Read(ctx, version)
 }
 
 // Begin implements Client.Begin
@@ -178,8 +202,7 @@ type Implementer interface {
 	Read(
 		ctx context.Context,
 		offset string,
-		n uint64,
-	) ([]Event, error)
+	) (Event, error)
 
 	Begin(context.Context) (string, error)
 
