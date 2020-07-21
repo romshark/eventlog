@@ -126,6 +126,9 @@ func (e *EventLog) Append(payloadJSON []byte) (
 	if offset, newVersion, tm, err = e.impl.Append(
 		payloadJSON,
 	); err != nil {
+		offset = 0
+		newVersion = 0
+		tm = time.Time{}
 		return
 	}
 
@@ -152,6 +155,9 @@ func (e *EventLog) AppendMulti(payloadsJSON ...[]byte) (
 	if offset, newVersion, tm, err = e.impl.AppendMulti(
 		payloadsJSON...,
 	); err != nil {
+		offset = 0
+		newVersion = 0
+		tm = time.Time{}
 		return
 	}
 
@@ -182,6 +188,9 @@ func (e *EventLog) AppendCheck(
 		assumedVersion,
 		payloadJSON,
 	); err != nil {
+		offset = 0
+		newVersion = 0
+		tm = time.Time{}
 		return
 	}
 
@@ -216,6 +225,9 @@ func (e *EventLog) AppendCheckMulti(
 		assumedVersion,
 		payloadsJSON...,
 	); err != nil {
+		offset = 0
+		newVersion = 0
+		tm = time.Time{}
 		return
 	}
 
