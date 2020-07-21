@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -24,7 +23,6 @@ const (
 	pathLog     = "log/"
 	pathVersion = "version"
 	pathBegin   = "begin"
-	queryArgsN  = "n"
 )
 
 var (
@@ -145,8 +143,7 @@ func (c *HTTP) AppendJSON(
 func (c *HTTP) Read(
 	ctx context.Context,
 	offset string,
-	n uint64,
-) ([]Event, error) {
+) (Event, error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -157,11 +154,6 @@ func (c *HTTP) Read(
 	req.Header.SetMethod(methodGet)
 	req.URI().SetPath(pathLog + offset)
 
-	args := req.URI().QueryArgs()
-	if n > 0 {
-		args.Set(queryArgsN, strconv.FormatUint(n, 10))
-	}
-
 	var err error
 	if d, ok := ctx.Deadline(); ok {
 		err = c.clt.DoDeadline(req, resp, d)
@@ -169,7 +161,7 @@ func (c *HTTP) Read(
 		err = c.clt.Do(req, resp)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
+		return Event{}, fmt.Errorf("http request: %w", err)
 	}
 
 	switch {
@@ -180,30 +172,36 @@ func (c *HTTP) Read(
 	if resp.StatusCode() == fasthttp.StatusBadRequest {
 		switch {
 		case bytes.Equal(resp.Body(), consts.StatusMsgErrOffsetOutOfBound):
-			return nil, ErrOffsetOutOfBound
+			return Event{}, ErrOffsetOutOfBound
 		}
-		return nil, fmt.Errorf(
+		return Event{}, fmt.Errorf(
 			"unexpected client-side error: (%d) %s",
 			resp.StatusCode(),
 			string(resp.Body()),
 		)
 	} else if resp.StatusCode() != fasthttp.StatusOK {
-		return nil, fmt.Errorf(
+		return Event{}, fmt.Errorf(
 			"unexpected status code: %d",
 			resp.StatusCode(),
 		)
 	}
 
-	var events struct {
-		Len  uint    `json:"len"`
-		Data []Event `json:"data"`
+	var e struct {
+		Offset  string          `json:"offset"`
+		Time    time.Time       `json:"time"`
+		Next    string          `json:"next"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(resp.Body(), &e); err != nil {
+		return Event{}, fmt.Errorf("unmarshalling response body: %w", err)
 	}
 
-	if err := json.Unmarshal(resp.Body(), &events); err != nil {
-		return nil, fmt.Errorf("unmarshalling response body: %w", err)
-	}
-
-	return events.Data, nil
+	return Event{
+		Offset:  e.Offset,
+		Time:    e.Time,
+		Next:    e.Next,
+		Payload: e.Payload,
+	}, nil
 }
 
 // Begin implements Client.Begin

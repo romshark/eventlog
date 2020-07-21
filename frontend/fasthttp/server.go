@@ -1,18 +1,12 @@
 package fasthttp
 
 import (
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
 
 	"github.com/fasthttp/websocket"
-	"github.com/valyala/fasthttp"
-)
-
-const (
-	queryKeyN = "n"
 )
 
 var (
@@ -60,27 +54,6 @@ func (s *Server) Close() {
 		close()
 	}
 	s.wsConns = map[*websocket.Conn]func(){}
-}
-
-// parseQueryN parses the "n" query parameter from the given request context
-// returning false if the request processing shouldn't be continued
-func parseQueryN(ctx *fasthttp.RequestCtx) (uint64, bool) {
-	args := ctx.QueryArgs()
-	b := args.Peek(queryKeyN)
-	if b == nil {
-		return 0, true
-	}
-
-	n, err := strconv.ParseUint(string(b), 10, 64)
-	if err != nil {
-		ctx.Error(
-			fasthttp.StatusMessage(fasthttp.StatusBadRequest),
-			fasthttp.StatusBadRequest,
-		)
-		return 0, false
-	}
-
-	return n, true
 }
 
 type Log interface {

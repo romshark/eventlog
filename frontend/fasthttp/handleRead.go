@@ -7,21 +7,17 @@ import (
 	eventlog "github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/consts"
 	"github.com/romshark/eventlog/internal/hex"
-	"github.com/romshark/eventlog/internal/itoa"
 
 	"github.com/valyala/fasthttp"
 )
 
 var (
-	partH1         = []byte(`{"data":[`)
-	partE1         = []byte(`{"time":"`)
-	partE2         = []byte(`","offset":"`)
-	partE3         = []byte(`","payload":`)
-	partT1         = []byte(`],"len":`)
-	partT2         = []byte(`,"next":"`)
-	partT3         = []byte(`"}`)
-	partCloseBlock = []byte(`}`)
-	partSeparator  = []byte(`,`)
+	partE1             = []byte(`{"time":"`)
+	partE2             = []byte(`","offset":"`)
+	partE3             = []byte(`","payload":`)
+	partE4             = []byte(`,"next":"`)
+	partCloseBlock     = []byte(`}`)
+	partCloseBlockText = []byte(`"}`)
 )
 
 // handleRead handles GET /log/:offset
@@ -35,36 +31,20 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	n, ok := parseQueryN(ctx)
-	if !ok {
-		return nil
-	}
-
-	counter := uint32(0)
-
-	_, _ = ctx.Write(partH1)
-	firstCall := true
 	nextOffset, err := s.eventLog.Scan(
 		offset,
-		n,
+		1,
 		func(timestamp uint64, payload []byte, offset uint64) error {
-			if !firstCall {
-				_, _ = ctx.Write(partSeparator)
-			}
-			firstCall = false
-
-			counter++
 			_, _ = ctx.Write(partE1)
-
 			buf = time.Unix(int64(timestamp), 0).AppendFormat(buf, time.RFC3339)
 			_, _ = ctx.Write(buf)
 			buf = buf[:0]
 
 			_, _ = ctx.Write(partE2)
 			_, _ = hex.WriteUint64(ctx, offset)
+
 			_, _ = ctx.Write(partE3)
 			_, _ = ctx.Write(payload)
-			_, _ = ctx.Write(partCloseBlock)
 
 			return nil
 		},
@@ -80,15 +60,12 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 		return err
 	}
 
-	_, _ = ctx.Write(partT1)
-	_ = itoa.U32toa(ctx, counter)
-
 	if nextOffset == 0 {
 		_, _ = ctx.Write(partCloseBlock)
 	} else {
-		_, _ = ctx.Write(partT2)
+		_, _ = ctx.Write(partE4)
 		_, _ = hex.WriteUint64(ctx, nextOffset)
-		_, _ = ctx.Write(partT3)
+		_, _ = ctx.Write(partCloseBlockText)
 	}
 
 	ctx.Response.SetStatusCode(fasthttp.StatusOK)
