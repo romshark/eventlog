@@ -24,13 +24,13 @@ import (
 	"github.com/valyala/fasthttp/fasthttputil"
 )
 
-func test(t *testing.T, f func(s Setup)) {
-	t.Run("HTTP", func(t *testing.T) { f(setupHTTP(t)) })
-	t.Run("Inmem", func(t *testing.T) { f(setupInmem(t)) })
+func test(t *testing.T, f func(*testing.T, Setup)) {
+	t.Run("HTTP", func(t *testing.T) { f(t, setupHTTP(t)) })
+	t.Run("Inmem", func(t *testing.T) { f(t, setupInmem(t)) })
 }
 
 func TestAppend(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 		first := s.DB.FirstOffset()
 
@@ -69,7 +69,7 @@ func TestAppend(t *testing.T) {
 }
 
 func TestAppendErrInvalid(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		iv, err := s.Client.Version(context.Background())
@@ -89,7 +89,7 @@ func TestAppendErrInvalid(t *testing.T) {
 }
 
 func TestAppendCheck(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		first := s.DB.FirstOffset()
@@ -147,7 +147,7 @@ func TestAppendCheck(t *testing.T) {
 }
 
 func TestAppendCheckErrInvalid(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		iv, err := s.Client.Version(context.Background())
@@ -167,7 +167,7 @@ func TestAppendCheckErrInvalid(t *testing.T) {
 }
 
 func TestAppendCheckErrNoAssumedVersion(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		iv, err := s.Client.Version(context.Background())
@@ -191,7 +191,7 @@ func TestAppendCheckErrNoAssumedVersion(t *testing.T) {
 }
 
 func TestAppendCheckJSON(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		first := s.DB.FirstOffset()
@@ -249,7 +249,7 @@ func TestAppendCheckJSON(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		offsets := make([]uint64, 3)
@@ -316,7 +316,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestAppendJSONInvalid(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		for _, t1 := range []struct {
 			name  string
 			input string
@@ -346,7 +346,7 @@ func TestAppendJSONInvalid(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		nextExpected := "0"
@@ -373,7 +373,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestBegin(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		vBegin, err := s.Client.Begin(context.Background())
@@ -395,7 +395,7 @@ func TestBegin(t *testing.T) {
 }
 
 func TestListen(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		versionChan1 := make(chan string, 1)
@@ -429,7 +429,7 @@ func TestListen(t *testing.T) {
 }
 
 func TestListenCancel(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		errChan := make(chan error, 1)
@@ -450,7 +450,7 @@ func TestListenCancel(t *testing.T) {
 }
 
 func TestTryAppend(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		assumed, err := s.Client.Begin(context.Background())
@@ -513,7 +513,7 @@ func TestTryAppend(t *testing.T) {
 }
 
 func TestTryAppendTransactionErr(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		assumed, err := s.Client.Begin(context.Background())
@@ -550,7 +550,7 @@ func TestTryAppendTransactionErr(t *testing.T) {
 }
 
 func TestTryAppendSyncErr(t *testing.T) {
-	test(t, func(s Setup) {
+	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
 		assumed, err := s.Client.Begin(context.Background())
