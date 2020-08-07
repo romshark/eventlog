@@ -341,6 +341,42 @@ func TestScanSingle(t *testing.T) {
 	})
 }
 
+func TestScanUnlimited(t *testing.T) {
+	test(t, func(t *testing.T, l *eventlog.EventLog) {
+		e := make([]struct {
+			Time    time.Time
+			Offset  uint64
+			Payload []byte
+		}, 3)
+
+		for i := range e {
+			var err error
+			e[i].Payload = PayloadJSON(t, Payload{"index": i})
+			e[i].Offset, _, e[i].Time, err = l.Append(e[i].Payload)
+			require.NoError(t, err)
+		}
+
+		var counter int
+		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
+			timestamp uint64,
+			payloadJSON []byte,
+			offset uint64,
+		) error {
+			v := e[counter]
+			counter++
+
+			require.Equal(t, uint64(v.Time.Unix()), timestamp)
+			require.Equal(t, v.Offset, offset)
+			require.Equal(t, string(v.Payload), string(payloadJSON))
+
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 3, counter)
+		require.Equal(t, l.Version(), nextOffset)
+	})
+}
+
 func test(t *testing.T, fn func(*testing.T, *eventlog.EventLog)) {
 	t.Run("Inmem", func(t *testing.T) {
 		l := eventlog.New(inmem.New())
