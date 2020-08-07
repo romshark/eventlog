@@ -56,6 +56,11 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		ctx.SetBody(consts.StatusMsgErrOffsetOutOfBound)
 		return nil
+	case errors.Is(err, eventlog.ErrInvalidOffset):
+		ctx.ResetBody()
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody(consts.StatusMsgErrInvalidOffset)
+		return nil
 	case err != nil:
 		return err
 	}
