@@ -247,6 +247,12 @@ func (f *File) Scan(
 		return 0, eventlog.ErrOffsetOutOfBound
 	}
 
+	var (
+		read int64
+		tm   uint64
+		pl   []byte
+	)
+
 	var i int64
 	if n > 0 {
 		// Limited scan
@@ -256,37 +262,43 @@ func (f *File) Scan(
 
 		var r uint64
 		for i, r = int64(offset), uint64(0); r < n; r++ {
-			n, tm, pl, err := readEntry(f.file, buf, i)
+			read, tm, pl, err = readEntry(f.file, buf, i)
 			if err == io.EOF {
-				break
+				err = nil
+				return
 			} else if err != nil {
-				return 0, err
+				return
 			}
-			i += int64(n)
-			if err := fn(tm, pl, uint64(i)); err != nil {
-				return 0, err
+			nextOffset = uint64(i)
+			if err = fn(tm, pl, uint64(i)); err != nil {
+				nextOffset += uint64(read)
+				return
 			}
+			i += int64(read)
+			nextOffset = uint64(i)
 		}
 	} else {
 		// Unlimited scan
 		for i = int64(offset); ; {
 			if offset >= f.tailOffset {
-				break
+				return
 			}
-			n, tm, pl, err := readEntry(f.file, buf, i)
+			read, tm, pl, err = readEntry(f.file, buf, i)
 			if err == io.EOF {
-				break
+				err = nil
+				return
 			} else if err != nil {
-				return 0, err
+				return
 			}
-			i += int64(n)
-			if err := fn(tm, pl, uint64(i)); err != nil {
-				return 0, err
+			nextOffset = uint64(i)
+			if err = fn(tm, pl, uint64(i)); err != nil {
+				nextOffset += uint64(read)
+				return
 			}
+			i += int64(read)
+			nextOffset = uint64(i)
 		}
 	}
-
-	nextOffset = uint64(i)
 	return
 }
 
