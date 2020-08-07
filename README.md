@@ -7,7 +7,7 @@
 <a href="https://goreportcard.com/report/github.com/romshark/eventlog">
     <img src="https://goreportcard.com/badge/github.com/romshark/eventlog" alt="GoReportCard">
 </a>
-<a href="https://godoc.org/github.com/romshark/eventlog">
+<a href="https://pkg.go.dev/github.com/romshark/eventlog">
     <img src="https://godoc.org/github.com/romshark/eventlog?status.svg" alt="GoDoc">
 </a>
 
