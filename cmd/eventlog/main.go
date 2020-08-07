@@ -27,6 +27,11 @@ var (
 		":8080",
 		"TCP address to listen to",
 	)
+	flagAPIHTTPReadTimeout = flag.Duration(
+		"apihttp-read-timeout",
+		2*time.Second,
+		"read timeout of the HTTP API server",
+	)
 	flagStoreEngine = flag.String(
 		"store",
 		engineFile,
@@ -134,7 +139,8 @@ func main() {
 	// Initialize the frontend
 	server := ffhttp.New(logErr, eventLog)
 	httpServer := &fasthttp.Server{
-		Handler: server.Serve,
+		Handler:     server.Serve,
+		ReadTimeout: *flagAPIHTTPReadTimeout,
 	}
 
 	// Launch server
