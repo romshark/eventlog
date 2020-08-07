@@ -414,6 +414,32 @@ func TestScanExceedLenght(t *testing.T) {
 	})
 }
 
+func TestScanErrOffsetOutOfBound(t *testing.T) {
+	test(t, func(t *testing.T, l *eventlog.EventLog) {
+		var counter int
+		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
+			uint64, []byte, uint64,
+		) error {
+			counter++
+			return nil
+		})
+		require.Error(t, err)
+		require.True(t, errors.Is(err, eventlog.ErrOffsetOutOfBound))
+		require.Zero(t, counter)
+		require.Zero(t, nextOffset)
+
+		// Try zero-offset
+		nextOffset, err = l.Scan(0, 0, func(uint64, []byte, uint64) error {
+			counter++
+			return nil
+		})
+		require.Error(t, err)
+		require.True(t, errors.Is(err, eventlog.ErrOffsetOutOfBound))
+		require.Zero(t, counter)
+		require.Zero(t, nextOffset)
+	})
+}
+
 func test(t *testing.T, fn func(*testing.T, *eventlog.EventLog)) {
 	t.Run("Inmem", func(t *testing.T) {
 		l := eventlog.New(inmem.New())
