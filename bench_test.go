@@ -152,7 +152,12 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 			context.Background(),
 			offset,
 			numEvents,
-			func(e client.Event) error {
+			func(
+				offset string,
+				tm time.Time,
+				payload []byte,
+				next string,
+			) error {
 				counter++
 				return nil
 			},

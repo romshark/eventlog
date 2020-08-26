@@ -87,7 +87,12 @@ func (c *Client) Scan(
 	ctx context.Context,
 	version string,
 	limit uint,
-	onEvent func(e Event) error,
+	onEvent func(
+		offset string,
+		tm time.Time,
+		payload []byte,
+		next string,
+	) error,
 ) error {
 	for i := uint(0); ; i++ {
 		if limit > 0 && i >= limit {
@@ -97,7 +102,12 @@ func (c *Client) Scan(
 		if err != nil {
 			return err
 		}
-		if err := onEvent(e); err != nil {
+		if err := onEvent(
+			e.Offset,
+			e.Time,
+			e.Payload,
+			e.Next,
+		); err != nil {
 			return err
 		}
 		if e.Next == "" {

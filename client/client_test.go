@@ -629,9 +629,19 @@ func scanClient(
 		ctx,
 		offset,
 		limit,
-		func(e client.Event) error {
-			ev := Event{Event: e}
-			if err := json.Unmarshal(e.Payload, &ev.Payload); err != nil {
+		func(
+			offset string,
+			tm time.Time,
+			payload []byte,
+			next string,
+		) error {
+			ev := Event{Event: client.Event{
+				Offset:  offset,
+				Time:    tm,
+				Payload: payload,
+				Next:    next,
+			}}
+			if err := json.Unmarshal(payload, &ev.Payload); err != nil {
 				return fmt.Errorf("unexpected error: %w", err)
 			}
 			events = append(events, ev)
