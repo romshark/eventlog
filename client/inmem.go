@@ -2,13 +2,13 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 	"unsafe"
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/hex"
+	"github.com/romshark/eventlog/internal/msgcodec"
 )
 
 type Inmem struct {
@@ -19,43 +19,56 @@ func NewInmem(e *eventlog.EventLog) *Inmem {
 	return &Inmem{e}
 }
 
-func (c *Inmem) AppendJSON(
+func (c *Inmem) Append(
 	ctx context.Context,
 	assumeVersion bool,
 	assumedVersion string,
-	payloadJSON []byte,
+	eventsEncoded []byte,
 ) (
 	offset string,
 	newVersion string,
 	tm time.Time,
 	err error,
 ) {
+	var events []eventlog.Event
+	if err = msgcodec.ScanBytesBinary(
+		eventsEncoded,
+		func(n int) error {
+			events = make([]eventlog.Event, 0, n)
+			return nil
+		},
+		func(label []byte, payloadJSON []byte) error {
+			events = append(events, eventlog.Event{
+				Label:       string(label),
+				PayloadJSON: payloadJSON,
+			})
+			return nil
+		},
+	); err != nil {
+		if err == msgcodec.ErrMalformedMessage {
+			err = ErrInvalidPayload
+		}
+		return
+	}
+
 	var of, nv uint64
 	if assumeVersion {
 		var av uint64
-		av, err = hex.ReadUint64(unsafeStringToBytes(assumedVersion))
+		av, err = hex.ReadUint64(unsafeS2B(assumedVersion))
 		if err != nil {
 			return
 		}
 
-		if payloadJSON[0] == '{' {
-			of, nv, tm, err = c.e.AppendCheck(av, payloadJSON)
+		if len(events) < 2 {
+			of, nv, tm, err = c.e.AppendCheck(av, events[0])
 		} else {
-			var b [][]byte
-			if b, err = unmarshalMultiple(payloadJSON); err != nil {
-				return
-			}
-			of, nv, tm, err = c.e.AppendCheckMulti(av, b...)
+			of, nv, tm, err = c.e.AppendCheckMulti(av, events...)
 		}
 	} else {
-		if payloadJSON[0] == '{' {
-			of, nv, tm, err = c.e.Append(payloadJSON)
+		if len(events) < 2 {
+			of, nv, tm, err = c.e.Append(events[0])
 		} else {
-			var b [][]byte
-			if b, err = unmarshalMultiple(payloadJSON); err != nil {
-				return
-			}
-			of, nv, tm, err = c.e.AppendMulti(b...)
+			of, nv, tm, err = c.e.AppendMulti(events...)
 		}
 	}
 	if err != nil {
@@ -73,15 +86,16 @@ func (c *Inmem) Read(
 	offset string,
 ) (Event, error) {
 	var e Event
-	of, err := hex.ReadUint64(unsafeStringToBytes(offset))
+	of, err := hex.ReadUint64(unsafeS2B(offset))
 	if err != nil {
 		return Event{}, err
 	}
 
 	next, err := c.e.Scan(of, 1, func(
-		timestamp uint64,
-		payloadJSON []byte,
 		offset uint64,
+		timestamp uint64,
+		label []byte,
+		payloadJSON []byte,
 	) error {
 		p := make([]byte, len(payloadJSON))
 		copy(p, payloadJSON)
@@ -132,14 +146,6 @@ func (c *Inmem) Listen(ctx context.Context, onUpdate func([]byte)) error {
 	return ctx.Err()
 }
 
-func unsafeStringToBytes(s string) []byte {
+func unsafeS2B(s string) []byte {
 	return *(*[]byte)(unsafe.Pointer(&s))
-}
-
-func unmarshalMultiple(b []byte) ([][]byte, error) {
-	var a []json.RawMessage
-	if err := json.Unmarshal(b, &a); err != nil {
-		return nil, eventlog.ErrInvalidPayload
-	}
-	return *(*[][]byte)(unsafe.Pointer(&a)), nil
 }

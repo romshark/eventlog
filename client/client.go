@@ -3,15 +3,19 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/internal/consts"
+	"github.com/romshark/eventlog/internal/msgcodec"
 )
 
 // Event represents a logged event
 type Event struct {
 	Offset  string    `json:"offset"`
 	Time    time.Time `json:"time"`
+	Label   []byte    `json:"label"`
 	Payload []byte    `json:"payload"`
 	Next    string    `json:"next"`
 }
@@ -27,28 +31,26 @@ func New(impl Implementer) *Client {
 	}
 }
 
-// AppendJSON appends one or multiple new events
-// in JSON format onto the log.
-func (c *Client) AppendJSON(
+// Append appends one or multiple new events onto the log.
+func (c *Client) Append(
 	ctx context.Context,
-	payload []byte,
+	events ...eventlog.Event,
 ) (
 	offset string,
 	newVersion string,
 	tm time.Time,
 	err error,
 ) {
-	return c.appendJSON(ctx, false, "", payload)
+	return c.append(ctx, false, "", events...)
 }
 
-// AppendCheckJSON appends one or multiple new events
-// in JSON format onto the logs if the assumed version
-// matches the actual log version, otherwise the operation
-// is rejected and ErrMismatchingVersions is returned.
-func (c *Client) AppendCheckJSON(
+// AppendCheck appends one or multiple new events onto the logs
+// if the assumed version matches the actual log version,
+// otherwise the operation is rejected and ErrMismatchingVersions is returned.
+func (c *Client) AppendCheck(
 	ctx context.Context,
 	assumedVersion string,
-	payload []byte,
+	events ...eventlog.Event,
 ) (
 	offset string,
 	newVersion string,
@@ -59,26 +61,35 @@ func (c *Client) AppendCheckJSON(
 		err = ErrInvalidVersion
 		return
 	}
-	return c.appendJSON(ctx, true, assumedVersion, payload)
+	return c.append(ctx, true, assumedVersion, events...)
 }
 
-func (c *Client) appendJSON(
+func (c *Client) append(
 	ctx context.Context,
 	assumeVersion bool,
 	assumedVersion string,
-	payloadJSON []byte,
+	events ...eventlog.Event,
 ) (
 	offset string,
 	newVersion string,
 	tm time.Time,
 	err error,
 ) {
-	if len(payloadJSON) < 1 {
-		err = ErrInvalidPayload
+	var b []byte
+	b, err = msgcodec.EncodeBinary(events...)
+	if err != nil {
+		return
+	}
+	if b == nil {
 		return
 	}
 
-	return c.impl.AppendJSON(ctx, assumeVersion, assumedVersion, payloadJSON)
+	return c.impl.Append(
+		ctx,
+		assumeVersion,
+		assumedVersion,
+		b,
+	)
 }
 
 // Scan reads a limited number of events at the given offset version
@@ -89,7 +100,8 @@ func (c *Client) Scan(
 	limit uint,
 	onEvent func(
 		offset string,
-		tm time.Time,
+		timestamp time.Time,
+		label []byte,
 		payload []byte,
 		next string,
 	) error,
@@ -105,6 +117,7 @@ func (c *Client) Scan(
 		if err := onEvent(
 			e.Offset,
 			e.Time,
+			e.Label,
 			e.Payload,
 			e.Next,
 		); err != nil {
@@ -142,12 +155,12 @@ func (c *Client) Listen(ctx context.Context, onUpdate func([]byte)) error {
 	return c.impl.Listen(ctx, onUpdate)
 }
 
-// TryAppendJSON keeps executing transaction until either cancelled,
+// TryAppend keeps executing transaction until either cancelled,
 // succeeded (assumed and actual event log versions match) or failed due to an error.
-func (c *Client) TryAppendJSON(
+func (c *Client) TryAppend(
 	ctx context.Context,
 	assumedVersion string,
-	transaction func() (events []byte, err error),
+	transaction func() (events []eventlog.Event, err error),
 	sync func() (string, error),
 ) (
 	offset string,
@@ -162,13 +175,17 @@ func (c *Client) TryAppendJSON(
 			return
 		}
 
-		var events []byte
+		var events []eventlog.Event
 		if events, err = transaction(); err != nil {
 			return
 		}
 
 		// Try to append new events onto the event log
-		offset, newVersion, tm, err = c.AppendCheckJSON(ctx, assumedVersion, events)
+		offset, newVersion, tm, err = c.AppendCheck(
+			ctx,
+			assumedVersion,
+			events...,
+		)
 		switch {
 		case errors.Is(err, ErrMismatchingVersions):
 			// The projection is out of sync, synchronize & repeat
@@ -192,6 +209,10 @@ var (
 	ErrMismatchingVersions = eventlog.ErrMismatchingVersions
 	ErrInvalidPayload      = eventlog.ErrInvalidPayload
 	ErrInvalidVersion      = errors.New("invalid version")
+	ErrLabelTooLong        = fmt.Errorf(
+		"label must not exceed %d bytes",
+		consts.MaxLabelLen,
+	)
 )
 
 type Log interface {
@@ -200,11 +221,11 @@ type Log interface {
 
 // Implementer represents a client implementer
 type Implementer interface {
-	AppendJSON(
+	Append(
 		ctx context.Context,
 		assumeVersion bool,
 		assumedVersion string,
-		payloadJSON []byte,
+		eventsEncoded []byte,
 	) (
 		offset string,
 		newVersion string,

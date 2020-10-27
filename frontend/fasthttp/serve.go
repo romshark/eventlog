@@ -35,7 +35,7 @@ func (s *Server) Serve(ctx *fasthttp.RequestCtx) {
 		switch {
 		case bytes.Equal(p, uriLog):
 			// POST /log/
-			handle = s.handleAppend
+			handle = s.handleAppendNocheck
 		case len(p) > len(uriLog) &&
 			bytes.HasPrefix(p, uriLog):
 			// POST /log/:assumedVersion

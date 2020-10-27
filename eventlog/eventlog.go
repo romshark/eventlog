@@ -2,14 +2,37 @@ package eventlog
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/romshark/eventlog/internal/broadcast"
+	"github.com/romshark/eventlog/internal/consts"
 	"github.com/romshark/eventlog/internal/jsonminify"
 )
 
 // ScanFn is called by EventLog.Scan for each scanned event
-type ScanFn func(timestamp uint64, payloadJSON []byte, offset uint64) error
+type ScanFn func(
+	offset uint64,
+	timestamp uint64,
+	label []byte,
+	payloadJSON []byte,
+) error
+
+type Event struct {
+	Label       string
+	PayloadJSON []byte
+}
+
+// Validate validates the label and JSON payload
+func (e Event) Validate() error {
+	if err := ValidateLabel(e.Label); err != nil {
+		return err
+	}
+	if err := ValidatePayloadJSON(e.PayloadJSON); err != nil {
+		return err
+	}
+	return nil
+}
 
 // Implementer represents an event log engine's implementer
 type Implementer interface {
@@ -20,7 +43,7 @@ type Implementer interface {
 	FirstOffset() uint64
 
 	// Append appends an event with the given payload to the log
-	Append(payloadJSON []byte) (
+	Append(event Event) (
 		offset uint64,
 		newVersion uint64,
 		tm time.Time,
@@ -28,7 +51,7 @@ type Implementer interface {
 	)
 
 	// Append appends multiple events with the given payloads to the log
-	AppendMulti(payloadsJSON ...[]byte) (
+	AppendMulti(events ...Event) (
 		offset uint64,
 		newVersion uint64,
 		tm time.Time,
@@ -42,7 +65,7 @@ type Implementer interface {
 	// is returned instead
 	AppendCheck(
 		assumedVersion uint64,
-		payloadJSON []byte,
+		event Event,
 	) (
 		offset uint64,
 		newVersion uint64,
@@ -57,7 +80,7 @@ type Implementer interface {
 	// is returned instead
 	AppendCheckMulti(
 		assumedVersion uint64,
-		payloadsJSON ...[]byte,
+		events ...Event,
 	) (
 		offset uint64,
 		newVersion uint64,
@@ -87,6 +110,13 @@ var (
 	ErrOffsetOutOfBound    = errors.New("offset out of bound")
 	ErrMismatchingVersions = errors.New("mismatching versions")
 	ErrInvalidOffset       = errors.New("invalid offset")
+	ErrLabelTooLong        = fmt.Errorf(
+		"label must not exceed %d bytes",
+		consts.MaxLabelLen,
+	)
+	ErrLabelContainsIllegalChars = errors.New(
+		"label contains illegal characters",
+	)
 )
 
 type EventLog struct {
@@ -112,20 +142,18 @@ func (e *EventLog) FirstOffset() uint64 {
 }
 
 // Append appends an event with the given payload to the log
-func (e *EventLog) Append(payloadJSON []byte) (
+func (e *EventLog) Append(event Event) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = ValidatePayloadJSON(payloadJSON); err != nil {
+	if err = event.Validate(); err != nil {
 		return
 	}
-	payloadJSON = jsonminify.Minify(payloadJSON)
+	event.PayloadJSON = jsonminify.Minify(event.PayloadJSON)
 
-	if offset, newVersion, tm, err = e.impl.Append(
-		payloadJSON,
-	); err != nil {
+	if offset, newVersion, tm, err = e.impl.Append(event); err != nil {
 		offset = 0
 		newVersion = 0
 		tm = time.Time{}
@@ -137,24 +165,22 @@ func (e *EventLog) Append(payloadJSON []byte) (
 }
 
 // AppendMulti appends multiple events with the given payloads to the log
-func (e *EventLog) AppendMulti(payloadsJSON ...[]byte) (
+func (e *EventLog) AppendMulti(events ...Event) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	for _, p := range payloadsJSON {
-		if err = ValidatePayloadJSON(p); err != nil {
+	for _, e := range events {
+		if err = e.Validate(); err != nil {
 			return
 		}
 	}
-	for i, p := range payloadsJSON {
-		payloadsJSON[i] = jsonminify.Minify(p)
+	for i := range events {
+		events[i].PayloadJSON = jsonminify.Minify(events[i].PayloadJSON)
 	}
 
-	if offset, newVersion, tm, err = e.impl.AppendMulti(
-		payloadsJSON...,
-	); err != nil {
+	if offset, newVersion, tm, err = e.impl.AppendMulti(events...); err != nil {
 		offset = 0
 		newVersion = 0
 		tm = time.Time{}
@@ -172,21 +198,21 @@ func (e *EventLog) AppendMulti(payloadsJSON ...[]byte) (
 // is returned instead
 func (e *EventLog) AppendCheck(
 	assumedVersion uint64,
-	payloadJSON []byte,
+	event Event,
 ) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	if err = ValidatePayloadJSON(payloadJSON); err != nil {
+	if err = event.Validate(); err != nil {
 		return
 	}
-	payloadJSON = jsonminify.Minify(payloadJSON)
+	event.PayloadJSON = jsonminify.Minify(event.PayloadJSON)
 
 	if offset, newVersion, tm, err = e.impl.AppendCheck(
 		assumedVersion,
-		payloadJSON,
+		event,
 	); err != nil {
 		offset = 0
 		newVersion = 0
@@ -205,25 +231,25 @@ func (e *EventLog) AppendCheck(
 // is returned instead
 func (e *EventLog) AppendCheckMulti(
 	assumedVersion uint64,
-	payloadsJSON ...[]byte,
+	events ...Event,
 ) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	for _, p := range payloadsJSON {
-		if err = ValidatePayloadJSON(p); err != nil {
+	for _, e := range events {
+		if err = e.Validate(); err != nil {
 			return
 		}
 	}
-	for i, p := range payloadsJSON {
-		payloadsJSON[i] = jsonminify.Minify(p)
+	for i := range events {
+		events[i].PayloadJSON = jsonminify.Minify(events[i].PayloadJSON)
 	}
 
 	if offset, newVersion, tm, err = e.impl.AppendCheckMulti(
 		assumedVersion,
-		payloadsJSON...,
+		events...,
 	); err != nil {
 		offset = 0
 		newVersion = 0

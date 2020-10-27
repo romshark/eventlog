@@ -65,11 +65,11 @@ func NewHTTP(
 	}
 }
 
-func (c *HTTP) AppendJSON(
+func (c *HTTP) Append(
 	ctx context.Context,
 	assumeVersion bool,
 	assumedVersion string,
-	payloadJSON []byte,
+	eventsEncoded []byte,
 ) (
 	offset string,
 	newVersion string,
@@ -91,7 +91,7 @@ func (c *HTTP) AppendJSON(
 		req.URI().SetPath(pathLog)
 	}
 
-	req.SetBody(payloadJSON)
+	req.SetBody(eventsEncoded)
 
 	if d, ok := ctx.Deadline(); ok {
 		err = c.clt.DoDeadline(req, resp, d)
