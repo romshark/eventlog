@@ -12,15 +12,17 @@ var _ eventlog.Implementer = new(Inmem)
 
 type inmemEvent struct {
 	Timestamp uint64
+	Label     []byte
 	Payload   []byte
 }
 
-func newInmemEvent(payload []byte, tm time.Time) inmemEvent {
-	p := make([]byte, len(payload))
-	copy(p, payload)
+func newInmemEvent(event eventlog.Event, tm time.Time) inmemEvent {
+	p := make([]byte, len(event.PayloadJSON))
+	copy(p, event.PayloadJSON)
 
 	return inmemEvent{
 		Timestamp: uint64(tm.UTC().Unix()),
+		Label:     []byte(event.Label),
 		Payload:   p,
 	}
 }
@@ -78,7 +80,7 @@ func (l *Inmem) Scan(
 	}
 
 	for _, e := range events {
-		if err = fn(e.Timestamp, e.Payload, offset); err != nil {
+		if err = fn(offset, e.Timestamp, e.Label, e.Payload); err != nil {
 			nextOffset = offset + 1
 			return
 		}
@@ -89,14 +91,14 @@ func (l *Inmem) Scan(
 	return
 }
 
-func (l *Inmem) Append(payloadJSON []byte) (
+func (l *Inmem) Append(event eventlog.Event) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
 	tm = time.Now()
-	ev := newInmemEvent(payloadJSON, tm)
+	ev := newInmemEvent(event, tm)
 
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -109,16 +111,16 @@ func (l *Inmem) Append(payloadJSON []byte) (
 	return
 }
 
-func (l *Inmem) AppendMulti(payloadsJSON ...[]byte) (
+func (l *Inmem) AppendMulti(events ...eventlog.Event) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	ev := make([]inmemEvent, len(payloadsJSON))
+	ev := make([]inmemEvent, len(events))
 	tm = time.Now()
-	for i, p := range payloadsJSON {
-		ev[i] = newInmemEvent(p, tm)
+	for i, e := range events {
+		ev[i] = newInmemEvent(e, tm)
 	}
 
 	l.lock.Lock()
@@ -132,7 +134,7 @@ func (l *Inmem) AppendMulti(payloadsJSON ...[]byte) (
 
 func (l *Inmem) AppendCheck(
 	assumedVersion uint64,
-	payloadJSON []byte,
+	event eventlog.Event,
 ) (
 	offset uint64,
 	newVersion uint64,
@@ -140,7 +142,7 @@ func (l *Inmem) AppendCheck(
 	err error,
 ) {
 	tm = time.Now()
-	ev := newInmemEvent(payloadJSON, tm)
+	ev := newInmemEvent(event, tm)
 
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -159,17 +161,17 @@ func (l *Inmem) AppendCheck(
 
 func (l *Inmem) AppendCheckMulti(
 	assumedVersion uint64,
-	payloadsJSON ...[]byte,
+	events ...eventlog.Event,
 ) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
 	err error,
 ) {
-	ev := make([]inmemEvent, len(payloadsJSON))
+	ev := make([]inmemEvent, len(events))
 	tm = time.Now()
-	for i, p := range payloadsJSON {
-		ev[i] = newInmemEvent(p, tm)
+	for i, e := range events {
+		ev[i] = newInmemEvent(e, tm)
 	}
 
 	l.lock.Lock()

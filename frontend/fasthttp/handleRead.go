@@ -14,8 +14,9 @@ import (
 var (
 	partE1             = []byte(`{"time":"`)
 	partE2             = []byte(`","offset":"`)
-	partE3             = []byte(`","payload":`)
-	partE4             = []byte(`,"next":"`)
+	partE3             = []byte(`","label":"`)
+	partE4             = []byte(`","payload":`)
+	partE5             = []byte(`,"next":"`)
 	partCloseBlock     = []byte(`}`)
 	partCloseBlockText = []byte(`"}`)
 )
@@ -34,7 +35,12 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 	nextOffset, err := s.eventLog.Scan(
 		offset,
 		1,
-		func(timestamp uint64, payload []byte, offset uint64) error {
+		func(
+			offset uint64,
+			timestamp uint64,
+			label []byte,
+			payloadJSON []byte,
+		) error {
 			_, _ = ctx.Write(partE1)
 			buf = time.Unix(int64(timestamp), 0).AppendFormat(buf, time.RFC3339)
 			_, _ = ctx.Write(buf)
@@ -44,7 +50,10 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 			_, _ = hex.WriteUint64(ctx, offset)
 
 			_, _ = ctx.Write(partE3)
-			_, _ = ctx.Write(payload)
+			_, _ = ctx.Write(label)
+
+			_, _ = ctx.Write(partE4)
+			_, _ = ctx.Write(payloadJSON)
 
 			return nil
 		},
@@ -68,7 +77,7 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 	if nextOffset == 0 {
 		_, _ = ctx.Write(partCloseBlock)
 	} else {
-		_, _ = ctx.Write(partE4)
+		_, _ = ctx.Write(partE5)
 		_, _ = hex.WriteUint64(ctx, nextOffset)
 		_, _ = ctx.Write(partCloseBlockText)
 	}

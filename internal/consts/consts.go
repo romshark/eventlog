@@ -2,6 +2,8 @@ package consts
 
 // Internal constants
 var (
+	MaxLabelLen = 65535
+
 	StatusMsgErrInvalidPayload         = []byte("ErrInvalidPayload")
 	StatusMsgErrOffsetOutOfBound       = []byte("ErrOffsetOutOfBound")
 	StatusMsgErrInvalidTypeName        = []byte("ErrInvalidTypeName")

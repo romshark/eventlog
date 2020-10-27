@@ -1,54 +1,70 @@
 package file_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
 
-	"github.com/cespare/xxhash"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/file"
+	"github.com/romshark/eventlog/eventlog/file/internal"
+	bin "github.com/romshark/eventlog/internal/bin"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCheckIntegrity(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(9999999999),   // timestamp
-		validJson2().xxHash,  // checksum
-		validJson2().length,  // payload length
-		validJson2().payload, // payload
+		e2.Checksum(t),  // checksum
+		e2.Timestamp,    // timestamp
+		e2.LabelLen(),   // label length
+		e2.PayloadLen(), // payload length
+		e2.Label,        // label
+		e2.Payload,      // payload
 	)
 
 	cbCalled := 0
 	r := require.New(t)
 	r.NoError(file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			switch cbCalled {
 			case 1:
-				r.Equal(uint64(8888888888), timestamp)
-				r.Equal(string(validJson().payload), string(payload))
-				r.Equal(int64(4), offset)
+				e1 := validEvent1()
+				r.Equal(e1.Timestamp, timestamp)
+				r.Equal(e1.Label, string(label))
+				r.Equal(e1.Payload, string(payload))
+				r.Equal(int64(file.FileHeaderLen), offset)
 			case 2:
-				r.Equal(uint64(9999999999), timestamp)
-				r.Equal(string(validJson2().payload), string(payload))
-				r.Equal(int64(31), offset)
+				e2 := validEvent2()
+				r.Equal(e2.Timestamp, timestamp)
+				r.Equal(e2.Label, string(label))
+				r.Equal(e2.Payload, string(payload))
+				r.Equal(int64(file.FileHeaderLen)+e1.Len(), offset)
 			}
 			return nil
 		},
@@ -57,45 +73,19 @@ func TestCheckIntegrity(t *testing.T) {
 }
 
 func TestCheckIntegrityUnsupportedVersion(t *testing.T) {
-	f := compose(uint32(file.SupportedProtoVersion + 1))
+	f := bin.Compose(uint32(file.SupportedProtoVersion + 1))
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
-			cbCalled++
-			return nil
-		},
-	)
-	r := require.New(t)
-	r.Error(err)
-	r.Equal("unsupported file version (3)", err.Error())
-	r.Zero(cbCalled)
-}
-
-func TestCheckIntegrityInvalidTimestamps(t *testing.T) {
-	f := compose(
-		// header
-		uint32(file.SupportedProtoVersion),
-		// first entry
-		uint64(9999999999),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
-		// second entry
-		uint64(8888888888),  // timestamp (invalid!)
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
-	)
-
-	cbCalled := 0
-	err := file.CheckIntegrity(
-		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
@@ -103,15 +93,72 @@ func TestCheckIntegrityInvalidTimestamps(t *testing.T) {
 	r := require.New(t)
 	r.Error(err)
 	r.Equal(
-		"invalid timestamp (8888888888) at 31 "+
-			"greater than previous (9999999999)",
+		fmt.Sprintf(
+			"unsupported file version (%d)",
+			file.SupportedProtoVersion+1,
+		),
+		err.Error(),
+	)
+	r.Zero(cbCalled)
+}
+
+func TestCheckIntegrityInvalidTimestamps(t *testing.T) {
+	e1 := validEvent1()
+	e1.Timestamp = uint64(9999999999)
+
+	e2 := validEvent2()
+	e2.Timestamp = uint64(8888888888)
+
+	f := bin.Compose(
+		// header
+		uint32(file.SupportedProtoVersion),
+		// first entry
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
+		// second entry
+		e2.Checksum(t),  // checksum
+		e2.Timestamp,    // timestamp
+		e2.LabelLen(),   // label length
+		e2.PayloadLen(), // payload length
+		e2.Label,        // label
+		e2.Payload,      // payload
+	)
+
+	cbCalled := 0
+	err := file.CheckIntegrity(
+		context.Background(),
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
+			cbCalled++
+			return nil
+		},
+	)
+	r := require.New(t)
+	r.Error(err)
+	r.Equal(
+		fmt.Sprintf(
+			"invalid timestamp (8888888888) at offset %d "+
+				"greater than previous (9999999999)",
+			int64(file.FileHeaderLen)+e1.Len(),
+		),
 		err.Error(),
 	)
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityInvalidJSONPayload(t *testing.T) {
-	for _, t1 := range []string{
+	for _, tt := range []string{
 		`{     }`,
 		`["array", "is", "illegal"]`,
 		`   42   `,
@@ -120,307 +167,547 @@ func TestCheckIntegrityInvalidJSONPayload(t *testing.T) {
 		`false   `,
 		`{x:"syntax error"}`,
 	} {
-		t.Run(t1, func(t *testing.T) {
-			f := compose(
+		t.Run(tt, func(t *testing.T) {
+			e1 := validEvent1()
+			e2 := validEvent2()
+			e2.Payload = tt
+
+			f := bin.Compose(
 				// header
 				uint32(file.SupportedProtoVersion),
 				// first entry
-				uint64(8888888888),  // timestamp
-				validJson().xxHash,  // checksum
-				validJson().length,  // payload length
-				validJson().payload, // payload
+				e1.Checksum(t),  // checksum
+				e1.Timestamp,    // timestamp
+				e1.LabelLen(),   // label length
+				e1.PayloadLen(), // payload length
+				e1.Label,        // label
+				e1.Payload,      // payload
 				// second entry
-				uint64(9999999999),               // timestamp
-				uint64(xxhash.Sum64([]byte(t1))), // checksum
-				uint32(len(t1)),                  // payload length
-				[]byte(t1),                       // payload (invalid!)
+				e2.Checksum(t),  // checksum
+				e2.Timestamp,    // timestamp
+				e2.LabelLen(),   // label length
+				e2.PayloadLen(), // payload length
+				e2.Label,        // label
+				e2.Payload,      // payload (invalid!)
 			)
 
 			cbCalled := 0
 			r := require.New(t)
 			err := file.CheckIntegrity(
 				context.Background(),
-				f,
-				nil,
-				func(timestamp uint64, payload []byte, offset int64) error {
+				newBuffer(),
+				FakeSrc(f),
+				func(
+					offset int64,
+					checksum uint64,
+					timestamp uint64,
+					label []byte,
+					payload []byte,
+				) error {
 					cbCalled++
 					return nil
 				},
 			)
 
 			r.Error(err)
-			r.True(errors.Is(err, eventlog.ErrInvalidPayload))
-			r.True(strings.HasPrefix(
-				err.Error(),
-				`invalid payload 31:`,
-			))
+			r.True(
+				errors.Is(err, eventlog.ErrInvalidPayload),
+				"unexpected error: (%T) %s", err, err.Error(),
+			)
+			r.True(
+				strings.HasPrefix(
+					err.Error(),
+					`invalid payload at offset 33:`,
+				),
+				"unexpected error message: %q", err.Error(),
+			)
 			r.Equal(1, cbCalled)
 		})
 	}
 }
 
-func TestCheckIntegrityPayloadLengthTooSmall(t *testing.T) {
-	f := compose(
+func TestCheckIntegrityLabelLengthTooSmall(t *testing.T) {
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(9999999999),           // timestamp
-		validJson().xxHash,           // checksum
-		uint32(file.MinPayloadLen-1), // payload length (invalid!)
-		validJson().payload,          // payload
+		e2.Checksum(t),          // checksum
+		e2.Timestamp,            // timestamp
+		uint16(len(e2.Label)-1), // label length (invalid!)
+		e2.PayloadLen(),         // payload length
+		e2.Label,                // label
+		e2.Payload,              // payload
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.True(errors.Is(err, eventlog.ErrInvalidOffset))
+	r.True(
+		errors.Is(err, eventlog.ErrInvalidOffset),
+		"unexpected error: (%T) %s", err, err.Error(),
+	)
+	r.Equal(
+		fmt.Sprintf(
+			"reading entry at offset %d: invalid offset",
+			int64(file.FileHeaderLen)+e1.Len(),
+		),
+		err.Error(),
+	)
+	r.Equal(1, cbCalled)
+}
+
+func TestCheckIntegrityLabelLengthTooLarge(t *testing.T) {
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
+		// header
+		uint32(file.SupportedProtoVersion),
+		// first entry
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
+		// second entry
+		e2.Checksum(t),          // checksum
+		e2.Timestamp,            // timestamp
+		uint16(len(e2.Label)+1), // label length (invalid!)
+		e2.PayloadLen(),         // payload length
+		e2.Label,                // label
+		e2.Payload,              // payload
+	)
+
+	cbCalled := 0
+	err := file.CheckIntegrity(
+		context.Background(),
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
+			cbCalled++
+			return nil
+		},
+	)
+	r := require.New(t)
+	r.Error(err)
+	r.True(
+		errors.Is(err, eventlog.ErrInvalidOffset),
+		"unexpected error: (%T) %s", err, err.Error(),
+	)
+	r.Equal(
+		fmt.Sprintf(
+			"reading entry at offset %d: invalid offset",
+			int64(file.FileHeaderLen)+e1.Len(),
+		),
+		err.Error(),
+	)
+	r.Equal(1, cbCalled)
+}
+
+func TestCheckIntegrityPayloadLengthTooSmall(t *testing.T) {
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
+		// header
+		uint32(file.SupportedProtoVersion),
+		// first entry
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
+		// second entry
+		e2.Checksum(t),            // checksum
+		e2.Timestamp,              // timestamp
+		e2.LabelLen(),             // label length
+		uint32(len(e2.Payload)-1), // payload length (invalid!)
+		e2.Label,                  // label
+		e2.Payload,                // payload
+	)
+
+	cbCalled := 0
+	err := file.CheckIntegrity(
+		context.Background(),
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
+			cbCalled++
+			return nil
+		},
+	)
+	r := require.New(t)
+	r.Error(err)
+	r.True(
+		errors.Is(err, eventlog.ErrInvalidOffset),
+		"unexpected error: (%T) %s", err, err.Error(),
+	)
+	r.Equal(
+		fmt.Sprintf(
+			"reading entry at offset %d: invalid offset",
+			int64(file.FileHeaderLen)+e1.Len(),
+		),
+		err.Error(),
+	)
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityPayloadLengthTooLarge(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(9999999999),           // timestamp
-		validJson().xxHash,           // checksum
-		uint32(file.MaxPayloadLen+1), // payload length (invalid!)
-		validJson().payload,          // payload
+		e2.Checksum(t),            // checksum
+		e2.Timestamp,              // timestamp
+		e2.LabelLen(),             // label length
+		uint32(len(e2.Payload)+1), // payload length (invalid!)
+		e2.Label,                  // label
+		e2.Payload,                // payload
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.True(errors.Is(err, eventlog.ErrInvalidOffset))
+	r.True(
+		errors.Is(err, eventlog.ErrInvalidOffset),
+		"unexpected error: (%T) %s", err, err.Error(),
+	)
 	r.Equal(
-		"reading entry at offset 31: invalid offset",
+		fmt.Sprintf(
+			"reading entry at offset %d: invalid offset",
+			int64(file.FileHeaderLen)+e1.Len(),
+		),
 		err.Error(),
 	)
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityPayloadTooSmall(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+	invalidPayload := e2.Payload
+	invalidPayload = invalidPayload[:len(invalidPayload)-1]
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(9999999999),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson2().length, // payload length
-		validJson().payload, // payload (too small!)
+		e2.Checksum(t),  // checksum
+		e2.Timestamp,    // timestamp
+		e2.LabelLen(),   // label length
+		e2.PayloadLen(), // payload length
+		e2.Label,        // label
+		invalidPayload,  // payload (too small!)
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.Equal(
-		"reading entry at offset 31: "+
-			"reading payload (expected: 17; read: 7)",
-		err.Error(),
-	)
+	r.Equal("reading entry at offset 33: invalid offset", err.Error())
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityMismatchingChecksum(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(9999999999),  // timestamp
-		uint64(0),           // checksum (mismatching!)
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e2.Checksum(t)-1, // checksum (mismatching!)
+		e2.Timestamp,     // timestamp
+		e2.LabelLen(),    // label length
+		e2.PayloadLen(),  // payload length
+		e2.Label,         // label
+		e2.Payload,       // payload
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.True(errors.Is(err, eventlog.ErrInvalidOffset))
+	r.True(
+		errors.Is(err, eventlog.ErrInvalidOffset),
+		"unexpected error: (%T) %s", err, err.Error(),
+	)
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityMalformedTimestamp(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		[]byte{0, 0}, // timestamp (malformed!)
+		e2.Checksum(t), // checksum
+		[]byte{0, 1},   // timestamp (malformed!)
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.Equal(
-		"reading entry at offset 31: "+
-			"reading timestamp (expected: 8; read: 2)",
-		err.Error(),
-	)
+	r.Equal("reading entry at offset 33: invalid offset", err.Error())
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityMalformedChecksum(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(8888888888), // timestamp
-		[]byte{0, 0},       // checksum (malformed!)
+		[]byte{0, 0}, // checksum (malformed)
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.Equal(
-		"reading entry at offset 31: "+
-			"reading payload hash (expected: 8; read: 2)",
-		err.Error(),
+	r.Equal("reading entry at offset 33: invalid offset", err.Error())
+	r.Equal(1, cbCalled)
+}
+
+func TestCheckIntegrityMalformedLabelLength(t *testing.T) {
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
+		// header
+		uint32(file.SupportedProtoVersion),
+		// first entry
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
+		// second entry
+		e2.Checksum(t), // checksum
+		e2.Timestamp,   // timestamp
+		[]byte{1},      // label length (malformed!)
 	)
+
+	cbCalled := 0
+	err := file.CheckIntegrity(
+		context.Background(),
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
+			cbCalled++
+			return nil
+		},
+	)
+	r := require.New(t)
+	r.Error(err)
+	r.Equal("reading entry at offset 33: invalid offset", err.Error())
 	r.Equal(1, cbCalled)
 }
 
 func TestCheckIntegrityMalformedPayloadLength(t *testing.T) {
-	f := compose(
+	e1 := validEvent1()
+	e2 := validEvent2()
+
+	f := bin.Compose(
 		// header
 		uint32(file.SupportedProtoVersion),
 		// first entry
-		uint64(8888888888),  // timestamp
-		validJson().xxHash,  // checksum
-		validJson().length,  // payload length
-		validJson().payload, // payload
+		e1.Checksum(t),  // checksum
+		e1.Timestamp,    // timestamp
+		e1.LabelLen(),   // label length
+		e1.PayloadLen(), // payload length
+		e1.Label,        // label
+		e1.Payload,      // payload
 		// second entry
-		uint64(8888888888), // timestamp
-		validJson().xxHash, // checksum
-		[]byte{0, 0},       // payload length (malformed!)
+		e2.Checksum(t), // checksum
+		e2.Timestamp,   // timestamp
+		e2.LabelLen(),  // label length
+		[]byte{0, 1},   // payload length (malformed!)
 	)
 
 	cbCalled := 0
 	err := file.CheckIntegrity(
 		context.Background(),
-		f,
-		nil,
-		func(timestamp uint64, payload []byte, offset int64) error {
+		newBuffer(),
+		FakeSrc(f),
+		func(
+			offset int64,
+			checksum uint64,
+			timestamp uint64,
+			label []byte,
+			payload []byte,
+		) error {
 			cbCalled++
 			return nil
 		},
 	)
 	r := require.New(t)
 	r.Error(err)
-	r.Equal(
-		"reading entry at offset 31: "+
-			"reading payload length (expected: 4; read: 2)",
-		err.Error(),
-	)
+	r.Equal("reading entry at offset 33: invalid offset", err.Error())
 	r.Equal(1, cbCalled)
 }
 
-func compose(parts ...interface{}) fake {
-	b := new(bytes.Buffer)
-	for _, p := range parts {
-		switch v := p.(type) {
-		case uint32:
-			buf := make([]byte, 4)
-			binary.LittleEndian.PutUint32(buf, v)
-			_, _ = b.Write(buf)
-		case uint64:
-			buf := make([]byte, 8)
-			binary.LittleEndian.PutUint64(buf, v)
-			_, _ = b.Write(buf)
-		case []byte:
-			_, _ = b.Write(v)
-		default:
-			panic(fmt.Errorf("unsupported part type"))
-		}
-	}
-	return fake(b.Bytes())
-}
+type FakeSrc []byte
 
-type fake []byte
-
-func (f fake) ReadAt(buf []byte, offset int64) (read int, err error) {
+func (f FakeSrc) ReadAt(buf []byte, offset int64) (read int, err error) {
 	if offset >= int64(len(f)) {
 		return 0, io.EOF
 	}
@@ -432,9 +719,9 @@ func (f fake) ReadAt(buf []byte, offset int64) (read int, err error) {
 	return len(buf), nil
 }
 
-func TestFakeRead(t *testing.T) {
+func TestFakeSrc(t *testing.T) {
 	r := require.New(t)
-	f := fake("0123456789")
+	f := FakeSrc("0123456789")
 
 	b := make([]byte, 4)
 	n, err := f.ReadAt(b, 0)
@@ -468,26 +755,45 @@ func TestFakeRead(t *testing.T) {
 	r.Equal([]byte{0, 0}, b)
 }
 
-func validJson() (v struct {
-	xxHash  uint64
-	length  uint32
-	payload []byte
-}) {
-	const s = `{"x":0}`
-	v.payload = []byte(s)
-	v.length = uint32(len(s))
-	v.xxHash = uint64(xxhash.Sum64([]byte(s)))
-	return
+func validEvent1() TestEvent {
+	return TestEvent{
+		Timestamp: 8888888888,
+		Label:     "",
+		Payload:   `{"x":0}`,
+	}
 }
 
-func validJson2() (v struct {
-	xxHash  uint64
-	length  uint32
-	payload []byte
-}) {
-	const s = `{"medium":"size"}`
-	v.payload = []byte(s)
-	v.length = uint32(len(s))
-	v.xxHash = uint64(xxhash.Sum64([]byte(s)))
-	return
+func validEvent2() TestEvent {
+	return TestEvent{
+		Timestamp: 9999999999,
+		Label:     "foo_bar",
+		Payload:   `{"medium":"size"}`,
+	}
+}
+
+type TestEvent struct {
+	Timestamp uint64
+	Label     string
+	Payload   string
+}
+
+func (e TestEvent) LabelLen() uint16 {
+	return uint16(len(e.Label))
+}
+
+func (e TestEvent) PayloadLen() uint32 {
+	return uint32(len(e.Payload))
+}
+
+func (e TestEvent) Len() int64 {
+	return int64(22 + len(e.Label) + len(e.Payload))
+}
+
+func (e TestEvent) Checksum(t *testing.T) uint64 {
+	c := internal.ChecksumT(t, e.Timestamp, e.Label, e.Payload)
+	return c
+}
+
+func newBuffer() internal.ReadBuffer {
+	return make([]byte, file.MinReadBufferLen)
 }

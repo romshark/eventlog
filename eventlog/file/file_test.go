@@ -30,19 +30,19 @@ func TestChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, l)
 
-	_, v, _, err := l.Append([]byte(`{"i":0}`))
+	_, v1, _, err := l.Append(eventlog.Event{PayloadJSON: []byte(`{"i":0}`)})
 	require.NoError(t, err)
-	require.Greater(t, v, uint64(0))
+	require.Greater(t, v1, uint64(0))
 
-	_, _, _, err = l.Append([]byte(`{"i":1}`))
+	_, v2, _, err := l.Append(eventlog.Event{PayloadJSON: []byte(`{"i":1}`)})
 	require.NoError(t, err)
+	require.Greater(t, v2, v1)
 
-	nextOffset, err := l.Scan(v+1, 1, func(
-		timestamp uint64,
-		payloadJSON []byte,
-		offset uint64,
+	invalidOffset := v1 + 1
+	nextOffset, err := l.Scan(invalidOffset, 1, func(
+		uint64, uint64, []byte, []byte,
 	) error {
-		return fmt.Errorf("unexpected call")
+		panic("unexpected call")
 	})
 	require.Error(t, err)
 	require.True(

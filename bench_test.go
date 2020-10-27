@@ -75,6 +75,7 @@ func BenchmarkFileHTTP_Append_P128(b *testing.B) {
 	clt, teardown := newBenchmarkSetup(b)
 	defer teardown()
 
+	label := "BenchmarkEvent"
 	payload := []byte(`{
 		"example": "benchmark",
 		"foo": null,
@@ -85,9 +86,12 @@ func BenchmarkFileHTTP_Append_P128(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := clt.AppendJSON(
+		_, _, _, err := clt.Append(
 			context.Background(),
-			payload,
+			eventlog.Event{
+				Label:       label,
+				PayloadJSON: payload,
+			},
 		)
 		panicOnErr(err)
 	}
@@ -97,6 +101,7 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 	clt, teardown := newBenchmarkSetup(b)
 	defer teardown()
 
+	label := "BenchmarkEvent"
 	payload := []byte(`{
 		"example": "benchmark",
 		"foo": null,
@@ -105,18 +110,24 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 		"fazz": "4ff21935-b005-4bd3-936e-10d4692a8843"
 	}`)
 
-	_, newVersion, _, err := clt.AppendJSON(
+	_, newVersion, _, err := clt.Append(
 		context.Background(),
-		payload,
+		eventlog.Event{
+			Label:       label,
+			PayloadJSON: payload,
+		},
 	)
 	panicOnErr(err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, newVersion, _, err = clt.AppendCheckJSON(
+		_, newVersion, _, err = clt.AppendCheck(
 			context.Background(),
 			newVersion,
-			payload,
+			eventlog.Event{
+				Label:       label,
+				PayloadJSON: payload,
+			},
 		)
 		panicOnErr(err)
 	}
@@ -130,14 +141,20 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 
 	var offset string
 
+	label := "BenchmarkEvent"
+	payload := []byte(`{
+		"example": "benchmark",
+		"foo": null,
+		"bar": 52.7775,
+		"baz": false,
+		"fazz": "4ff21935-b005-4bd3-936e-10d4692a8843"
+	}`)
+
 	for i := uint(0); i < numEvents; i++ {
-		o, _, _, err := clt.AppendJSON(context.Background(), []byte(`{
-			"example": "benchmark",
-			"foo": null,
-			"bar": 52.7775,
-			"baz": false,
-			"fazz": "4ff21935-b005-4bd3-936e-10d4692a8843"
-		}`))
+		o, _, _, err := clt.Append(context.Background(), eventlog.Event{
+			Label:       label,
+			PayloadJSON: payload,
+		})
 		panicOnErr(err)
 		if i < 1 {
 			offset = o
@@ -154,7 +171,8 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 			numEvents,
 			func(
 				offset string,
-				tm time.Time,
+				timestamp time.Time,
+				label []byte,
 				payload []byte,
 				next string,
 			) error {

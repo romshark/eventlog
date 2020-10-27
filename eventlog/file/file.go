@@ -1,8 +1,6 @@
 package file
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,23 +9,41 @@ import (
 
 	"github.com/cespare/xxhash"
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/eventlog/file/internal"
 	"github.com/romshark/eventlog/internal/bufpool"
+	"github.com/romshark/eventlog/internal/consts"
 )
 
 const (
 	// SupportedProtoVersion defines the supported protocol version
-	SupportedProtoVersion = 2
+	SupportedProtoVersion = 3
 
-	fileHeaderLen  = 4
-	entryHeaderLen = 16
+	// FileHeaderLen defines the file header length in bytes
+	FileHeaderLen = 4
 
+	// EntryHeaderLen defines the entry header length in bytes
+	EntryHeaderLen = 22
+
+	// MaxPayloadLen defines the maximum possible payload length in bytes
 	MaxPayloadLen = 1024 * 1024 // 1 MiB
-	MinPayloadLen = 7           // {"x":0}
-	minEntryLen   = entryHeaderLen + MinPayloadLen
+
+	// MinPayloadLen defines the minimum possible payload length in bytes
+	MinPayloadLen = 7 // {"x":0}
+
+	// MinEntryLen defines the minimum possible
+	MinEntryLen = EntryHeaderLen + MinPayloadLen
+
+	// MaxLabelLen defines the maximum possible label length in bytes
+	MaxLabelLen = 256
 )
 
 // Make sure *File implements eventlog.Implementer
 var _ eventlog.Implementer = new(File)
+
+var readConfig = internal.ReaderConf{
+	MaxPayloadLen: MaxPayloadLen,
+	MinPayloadLen: MinPayloadLen,
+}
 
 // File is a persistent file-based event log
 type File struct {
@@ -52,17 +68,21 @@ func New(filePath string) (*File, error) {
 	f := &File{
 		filePath:   filePath,
 		file:       file,
-		tailOffset: fileHeaderLen,
+		tailOffset: FileHeaderLen,
 	}
-	f.bufPool = bufpool.NewPool(MaxPayloadLen)
+	f.bufPool = bufpool.NewPool(MaxPayloadLen + consts.MaxLabelLen)
 
 	b := f.bufPool.Get()
 	defer b.Release()
 	buf := b.Bytes()
 
-	switch err := readHeader(f.file, buf); err {
+	switch err := internal.ReadHeader(buf, f.file, checkVersion); err {
 	case io.EOF:
-		if err := f.writeFileHeader(buf); err != nil {
+		if err := internal.WriteFileHeader(
+			buf,
+			f.file,
+			SupportedProtoVersion,
+		); err != nil {
 			return nil, err
 		}
 	case nil:
@@ -71,135 +91,6 @@ func New(filePath string) (*File, error) {
 	}
 
 	return f, nil
-}
-
-func (f *File) writeFileHeader(buf []byte) error {
-	// New file, write header
-	bufUint32 := buf[:4]
-	binary.LittleEndian.PutUint32(bufUint32, SupportedProtoVersion)
-	if _, err := f.file.Write(bufUint32); err != nil {
-		return fmt.Errorf("writing header version: %w", err)
-	}
-	return nil
-}
-
-// read returns io.EOF when there's nothing more to read
-//
-// WARNING: pl []byte references the given buffer
-func readEntry(
-	reader reader,
-	buf []byte,
-	offset int64,
-) (
-	bytesRead int64,
-	tm uint64,
-	pl []byte,
-	err error,
-) {
-	var n int
-	var payloadHash uint64
-
-	buf8 := buf[:8]
-	buf4 := buf[:4]
-
-	// Read timestamp (8 bytes)
-	n, err = reader.ReadAt(buf8, offset)
-	switch {
-	case errors.Is(err, io.EOF):
-		return
-	case err != nil:
-		err = fmt.Errorf(
-			"reading timestamp at offset %d: %w",
-			offset,
-			err,
-		)
-		return
-	}
-	if n != 8 {
-		err = fmt.Errorf(
-			"reading timestamp (expected: 8; read: %d)",
-			n,
-		)
-		return
-	}
-	bytesRead += 8
-	tm = binary.LittleEndian.Uint64(buf8)
-
-	// Read payload hash (8 bytes, xxhash64)
-	n, err = reader.ReadAt(buf8, offset+8)
-	if err != nil {
-		err = fmt.Errorf(
-			"reading payload hash at offset %d: %w",
-			offset+8,
-			err,
-		)
-		return
-	}
-	if n != 8 {
-		err = fmt.Errorf(
-			"reading payload hash (expected: 8; read: %d)",
-			n,
-		)
-		return
-	}
-	bytesRead += 8
-	payloadHash = binary.LittleEndian.Uint64(buf8)
-
-	// Read payload len
-	n, err = reader.ReadAt(buf4, offset+16)
-	if err != nil {
-		err = fmt.Errorf(
-			"reading payload length at offset %d: %w",
-			offset+16,
-			err,
-		)
-		return
-	}
-	if n != 4 {
-		err = fmt.Errorf(
-			"reading payload length (expected: 4; read: %d)",
-			n,
-		)
-		return
-	}
-	bytesRead += 4
-
-	// Check payload length
-	payloadLen := binary.LittleEndian.Uint32(buf4)
-	if payloadLen < MinPayloadLen || payloadLen > MaxPayloadLen {
-		// Invalid payload length indicates wrong offset
-		err = eventlog.ErrInvalidOffset
-		return
-	}
-
-	// Read payload
-	pl = buf[:payloadLen]
-	n, err = reader.ReadAt(pl, offset+20)
-	if err != nil {
-		err = fmt.Errorf(
-			"reading payload at offset %d: %w",
-			offset+20,
-			err,
-		)
-		return
-	}
-	if n != len(pl) {
-		err = fmt.Errorf(
-			"reading payload (expected: %d; read: %d)",
-			len(pl),
-			n,
-		)
-		return
-	}
-	bytesRead += int64(payloadLen)
-
-	// Verify payload integrity
-	if payloadHash != xxhash.Sum64(pl) {
-		err = eventlog.ErrInvalidOffset
-		return
-	}
-
-	return
 }
 
 // Close closes the file
@@ -222,7 +113,7 @@ func (f *File) Version() uint64 {
 }
 
 // FirstOffset implements EventLog.FirstOffset
-func (f *File) FirstOffset() uint64 { return fileHeaderLen }
+func (f *File) FirstOffset() uint64 { return FileHeaderLen }
 
 // Scan reads a maximum of n events starting at the given offset.
 // If offset+n exceeds the length of the log then a smaller number
@@ -236,21 +127,30 @@ func (f *File) Scan(
 	nextOffset uint64,
 	err error,
 ) {
+	if offset < FileHeaderLen {
+		return 0, eventlog.ErrOffsetOutOfBound
+	}
+
 	b := f.bufPool.Get()
 	defer b.Release()
 	buf := b.Bytes()
+	buf = buf[:cap(buf)]
 
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 
-	if offset >= f.tailOffset || f.tailOffset-offset < minEntryLen {
+	if offset >= f.tailOffset {
 		return 0, eventlog.ErrOffsetOutOfBound
+	}
+	if f.tailOffset-offset < MinEntryLen {
+		return 0, eventlog.ErrInvalidOffset
 	}
 
 	var (
-		read int64
-		tm   uint64
-		pl   []byte
+		read int64  // bytes read
+		tm   uint64 // timestamp
+		lb   []byte // label
+		pl   []byte // payload
 	)
 
 	var i int64
@@ -262,7 +162,9 @@ func (f *File) Scan(
 
 		var r uint64
 		for i, r = int64(offset), uint64(0); r < n; r++ {
-			read, tm, pl, err = readEntry(f.file, buf, i)
+			_, tm, lb, pl, read, err = internal.ReadEvent(
+				buf, f.file, xxhash.New(), i, readConfig,
+			)
 			if err == io.EOF {
 				err = nil
 				return
@@ -270,7 +172,7 @@ func (f *File) Scan(
 				return
 			}
 			nextOffset = uint64(i)
-			if err = fn(tm, pl, uint64(i)); err != nil {
+			if err = fn(uint64(i), tm, lb, pl); err != nil {
 				nextOffset += uint64(read)
 				return
 			}
@@ -283,7 +185,9 @@ func (f *File) Scan(
 			if offset >= f.tailOffset {
 				return
 			}
-			read, tm, pl, err = readEntry(f.file, buf, i)
+			_, tm, lb, pl, read, err = internal.ReadEvent(
+				buf, f.file, xxhash.New(), i, readConfig,
+			)
 			if err == io.EOF {
 				err = nil
 				return
@@ -291,7 +195,7 @@ func (f *File) Scan(
 				return
 			}
 			nextOffset = uint64(i)
-			if err = fn(tm, pl, uint64(i)); err != nil {
+			if err = fn(uint64(i), tm, lb, pl); err != nil {
 				nextOffset += uint64(read)
 				return
 			}
@@ -302,28 +206,68 @@ func (f *File) Scan(
 	return
 }
 
-func (f *File) Append(payloadJSON []byte) (
+func (f *File) write(
+	buffer []byte,
+	checksum uint64,
+	timestamp uint64,
+	event eventlog.Event,
+) (
 	offset uint64,
 	newVersion uint64,
-	tm time.Time,
 	err error,
 ) {
-	tm = time.Now().UTC()
-	timestamp := uint64(tm.Unix())
-
-	buf := f.bufPool.Get()
-	defer buf.Release()
-
-	f.lock.Lock()
-	defer f.lock.Unlock()
-
 	offset = f.tailOffset
-	_, err = f.writeLog(buf.Bytes(), timestamp, payloadJSON)
+	written, err := internal.WriteEvent(
+		f.file,
+		buffer,
+		checksum,
+		int64(f.tailOffset),
+		timestamp,
+		event,
+	)
+	if err != nil {
+		f.tailOffset = offset
+		offset = 0
+		return
+	}
+	f.tailOffset += uint64(written)
 	newVersion = f.tailOffset
 	return
 }
 
-func (f *File) AppendMulti(payloadsJSON ...[]byte) (
+func (f *File) writeMulti(
+	buffer []byte,
+	timestamp uint64,
+	checksums []uint64,
+	events []eventlog.Event,
+) (
+	offset uint64,
+	newVersion uint64,
+	err error,
+) {
+	offset = f.tailOffset
+	var written int
+	for i, e := range events {
+		if written, err = internal.WriteEvent(
+			f.file,
+			buffer,
+			checksums[i],
+			int64(f.tailOffset),
+			timestamp,
+			e,
+		); err != nil {
+			f.tailOffset = offset
+			offset = 0
+			newVersion = 0
+			return
+		}
+		f.tailOffset += uint64(written)
+		newVersion = f.tailOffset
+	}
+	return
+}
+
+func (f *File) Append(event eventlog.Event) (
 	offset uint64,
 	newVersion uint64,
 	tm time.Time,
@@ -335,20 +279,73 @@ func (f *File) AppendMulti(payloadsJSON ...[]byte) (
 	buf := f.bufPool.Get()
 	defer buf.Release()
 
+	var checksum uint64
+	if checksum, err = internal.Checksum(
+		buf.Bytes(),
+		xxhash.New(),
+		timestamp,
+		internal.UnsafeS2B(event.Label),
+		event.PayloadJSON,
+	); err != nil {
+		err = fmt.Errorf("computing checksum: %w", err)
+		return
+	}
+
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
-	for _, p := range payloadsJSON {
-		offset = f.tailOffset
-		_, err = f.writeLog(buf.Bytes(), timestamp, p)
-		newVersion = f.tailOffset
+	offset, newVersion, err = f.write(
+		buf.Bytes(),
+		checksum,
+		timestamp,
+		event,
+	)
+	return
+}
+
+func (f *File) AppendMulti(events ...eventlog.Event) (
+	offset uint64,
+	newVersion uint64,
+	tm time.Time,
+	err error,
+) {
+	tm = time.Now().UTC()
+	timestamp := uint64(tm.Unix())
+
+	buf := f.bufPool.Get()
+	defer buf.Release()
+
+	checksums := make([]uint64, len(events))
+	for i, e := range events {
+		var checksum uint64
+		if checksum, err = internal.Checksum(
+			buf.Bytes(),
+			xxhash.New(),
+			timestamp,
+			internal.UnsafeS2B(e.Label),
+			e.PayloadJSON,
+		); err != nil {
+			err = fmt.Errorf("computing checksum [%d]: %w", i, err)
+			return
+		}
+		checksums[i] = checksum
 	}
+
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	offset, newVersion, err = f.writeMulti(
+		buf.Bytes(),
+		timestamp,
+		checksums,
+		events,
+	)
 	return
 }
 
 func (f *File) AppendCheck(
 	assumedVersion uint64,
-	payloadJSON []byte,
+	event eventlog.Event,
 ) (
 	offset uint64,
 	newVersion uint64,
@@ -361,6 +358,18 @@ func (f *File) AppendCheck(
 	buf := f.bufPool.Get()
 	defer buf.Release()
 
+	var checksum uint64
+	if checksum, err = internal.Checksum(
+		buf.Bytes(),
+		xxhash.New(),
+		timestamp,
+		internal.UnsafeS2B(event.Label),
+		event.PayloadJSON,
+	); err != nil {
+		err = fmt.Errorf("computing checksum: %w", err)
+		return
+	}
+
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
@@ -370,15 +379,18 @@ func (f *File) AppendCheck(
 		return
 	}
 
-	offset = f.tailOffset
-	_, err = f.writeLog(buf.Bytes(), timestamp, payloadJSON)
-	newVersion = f.tailOffset
+	offset, newVersion, err = f.write(
+		buf.Bytes(),
+		checksum,
+		timestamp,
+		event,
+	)
 	return
 }
 
 func (f *File) AppendCheckMulti(
 	assumedVersion uint64,
-	payloadsJSON ...[]byte,
+	events ...eventlog.Event,
 ) (
 	offset uint64,
 	newVersion uint64,
@@ -391,6 +403,22 @@ func (f *File) AppendCheckMulti(
 	buf := f.bufPool.Get()
 	defer buf.Release()
 
+	checksums := make([]uint64, len(events))
+	for i, e := range events {
+		var checksum uint64
+		if checksum, err = internal.Checksum(
+			buf.Bytes(),
+			xxhash.New(),
+			timestamp,
+			internal.UnsafeS2B(e.Label),
+			e.PayloadJSON,
+		); err != nil {
+			err = fmt.Errorf("computing checksum [%d]: %w", i, err)
+			return
+		}
+		checksums[i] = checksum
+	}
+
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
@@ -400,101 +428,13 @@ func (f *File) AppendCheckMulti(
 		return
 	}
 
-	for _, p := range payloadsJSON {
-		offset = f.tailOffset
-		_, err = f.writeLog(buf.Bytes(), timestamp, p)
-		newVersion = f.tailOffset
-	}
+	offset, newVersion, err = f.writeMulti(
+		buf.Bytes(),
+		timestamp,
+		checksums,
+		events,
+	)
 	return
-}
-
-func (f *File) writeLog(
-	buf []byte,
-	timestamp uint64,
-	payload []byte,
-) (int64, error) {
-	offset := int64(f.tailOffset)
-
-	buf8 := buf[:8]
-	buf4 := buf[:4]
-
-	// Write timestamp (8 bytes)
-	binary.LittleEndian.PutUint64(buf8, timestamp)
-	n, err := f.file.WriteAt(buf8, offset)
-	if err != nil {
-		return 0, err
-	}
-	if n != 8 {
-		return 0, fmt.Errorf(
-			"writing timestamp, unexpectedly wrote: %d",
-			n,
-		)
-	}
-
-	// Write payload hash (8 bytes, xxhash64)
-	checksum := xxhash.Sum64(payload)
-	binary.LittleEndian.PutUint64(buf8, checksum)
-	if n, err = f.file.WriteAt(buf8, offset+8); err != nil {
-		return 8, err
-	}
-	if n != 8 {
-		return 8, fmt.Errorf(
-			"writing payload hash, unexpectedly wrote: %d",
-			n,
-		)
-	}
-
-	// Write payload length (4 bytes)
-	pldLen := uint32(len(payload))
-	binary.LittleEndian.PutUint32(buf4, pldLen)
-	n, err = f.file.WriteAt(buf4, offset+16)
-	if err != nil {
-		return 16, err
-	}
-	if n != 4 {
-		return 16, fmt.Errorf(
-			"writing payload length, unexpectedly wrote: %d",
-			n,
-		)
-	}
-
-	// Write payload
-	n, err = f.file.WriteAt(payload, offset+20)
-	if err != nil {
-		return 20, err
-	}
-	if n != len(payload) {
-		return 20, fmt.Errorf(
-			"writing payload, unexpectedly wrote: %d",
-			n,
-		)
-	}
-
-	if err := f.file.Sync(); err != nil {
-		return 20, err
-	}
-
-	wrote := offset - int64(f.tailOffset)
-	f.tailOffset += uint64(20) + uint64(len(payload))
-
-	return wrote, nil
-}
-
-func readHeader(
-	reader reader,
-	buf []byte,
-) error {
-	buf4 := buf[:4]
-	n, err := reader.ReadAt(buf4, 0)
-	if err != nil {
-		return err
-	}
-	if n != 4 {
-		return fmt.Errorf(
-			"reading version header (expected: 4, actual: %d)", n,
-		)
-	}
-	return checkVersion(binary.LittleEndian.Uint32(buf4))
 }
 
 func checkVersion(version uint32) error {
@@ -502,8 +442,4 @@ func checkVersion(version uint32) error {
 		return fmt.Errorf("unsupported file version (%d)", version)
 	}
 	return nil
-}
-
-type reader interface {
-	ReadAt(buf []byte, offset int64) (read int, err error)
 }

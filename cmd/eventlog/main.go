@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/eventlog/file"
 	enginefile "github.com/romshark/eventlog/eventlog/file"
 	engineinmem "github.com/romshark/eventlog/eventlog/inmem"
 	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
@@ -102,20 +103,28 @@ func main() {
 
 			if err := enginefile.CheckIntegrity(
 				ctx,
+				make([]byte, file.MinReadBufferLen),
 				fl,
-				nil,
 				func(
-					timestamp uint64,
-					payload []byte,
 					offset int64,
+					checksum uint64,
+					timestamp uint64,
+					label []byte,
+					payload []byte,
 				) error {
 					// Integrity check progress
 					logInfo.Printf(
-						"%.2f: Valid entry (time: %s, length: %d) at offset %d",
+						"%.2f: Valid entry at offset %d\n"+
+							" time:            %s\n"+
+							" label:           %q\n"+
+							" payload (bytes): %d\n"+
+							" checksum:        %d\n",
 						float64(offset)/float64(fileSize)*100,
-						time.Unix(int64(timestamp), 0),
-						len(payload),
 						offset,
+						time.Unix(int64(timestamp), 0),
+						string(label),
+						len(payload),
+						checksum,
 					)
 					return nil
 				},
