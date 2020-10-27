@@ -84,6 +84,7 @@ func (c *HTTP) Append(
 
 	req.SetHost(c.host)
 	req.Header.SetMethod(methodPost)
+	req.Header.SetContentType("application/octet-stream")
 
 	if assumeVersion {
 		req.URI().SetPath(pathLog + assumedVersion)
