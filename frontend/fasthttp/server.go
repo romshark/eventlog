@@ -13,6 +13,7 @@ var (
 	methodGet       = []byte("GET")
 	methodPost      = []byte("POST")
 	uriLog          = []byte("/log/")
+	uriMeta         = []byte("/meta")
 	uriBegin        = []byte("/begin")
 	uriVersion      = []byte("/version")
 	uriSubscription = []byte("/subscription")

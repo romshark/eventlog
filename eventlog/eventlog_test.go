@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
-	enginefile "github.com/romshark/eventlog/eventlog/file"
+	logfile "github.com/romshark/eventlog/eventlog/file"
 	"github.com/romshark/eventlog/eventlog/inmem"
 	"github.com/romshark/eventlog/internal/consts"
 
@@ -18,7 +17,9 @@ import (
 )
 
 func TestAppendRead(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		// Append first event
 		offset1, version1, tm1, err := l.Append(
 			MakeEvent(t, "foo", Payload{"ix": 1}),
@@ -89,13 +90,27 @@ func TestAppendRead(t *testing.T) {
 			{"ix": float64(8)},
 			{"ix": float64(9)},
 		})
+
+		// Read metadata
+		m := make(map[string]string, l.MetadataLen())
+		l.ScanMetadata(func(f, v string) bool {
+			m[f] = v
+			return true
+		})
+		require.Len(t, m, len(s.Metadata))
+		for f, v := range s.Metadata {
+			require.Contains(t, m, f)
+			require.Equal(t, v, m[f])
+		}
 	})
 }
 
 // TestAppendReadUTF8 assumes regular reading and writing
 // events with UTF-8 encoded payloads to succeed
 func TestAppendReadUTF8(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		// Append first event
 		newOffset, newVersion, _, err := l.Append(
 			MakeEvent(t, "i18n", Payload{
@@ -124,7 +139,9 @@ func TestAppendReadUTF8(t *testing.T) {
 // to be returned when reading with an offset
 // that's >= the length of the log
 func TestAppendInvalidPayload(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		for input, successExpect := range validationTestJSON() {
 			t.Run(fmt.Sprintf(
 				"%t_%s",
@@ -157,7 +174,9 @@ func TestAppendInvalidPayload(t *testing.T) {
 // TestAppendInvalidLabel assumes ErrLabelContainsIllegalChar to be returned
 func TestAppendInvalidLabel(t *testing.T) {
 	validPayload := []byte(`{"x":0}`)
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		for _, cs := range validateTestLabel() {
 			offset, version, tm, err := l.Append(eventlog.Event{
 				Label:       cs.Label,
@@ -184,7 +203,9 @@ func TestAppendInvalidLabel(t *testing.T) {
 
 // TestReadN assumes no errors when reading a limited slice
 func TestReadN(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		const numEvents = 10
 
 		var latestVersion uint64
@@ -231,7 +252,9 @@ func TestReadN(t *testing.T) {
 // TestReadNGreaterLen assumes no errors when reading n logs where
 // n is greater than the actual log size
 func TestReadNGreaterLen(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		const numEvents = 5
 
 		var latestVersion uint64
@@ -261,7 +284,9 @@ func TestReadNGreaterLen(t *testing.T) {
 // TestAppendVersionMismatch assumes an ErrMismatchingVersions
 // to be returned when trying to append with an outdated offset
 func TestAppendVersionMismatch(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		// Append first event
 		_, version, _, err := l.Append(MakeEvent(t, "foo", Payload{"index": "0"}))
 		require.NoError(t, err)
@@ -296,7 +321,9 @@ func TestAppendVersionMismatch(t *testing.T) {
 // TestReadEmptyLog assumes an ErrOffsetOutOfBound error
 // to be returned when reading at offset 0 on an empty event log
 func TestReadEmptyLog(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		events, nextOffset, err := scan(l, l.FirstOffset(), 0)
 		require.Error(t, err)
 		require.True(
@@ -315,7 +342,9 @@ func TestReadEmptyLog(t *testing.T) {
 // to be returned when reading with an offset
 // that's >= the length of the log
 func TestReadOffsetOutOfBound(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		// Append first event
 		_, newVersion, _, err := l.Append(
 			MakeEvent(t, "foo", Payload{"index": "0"}),
@@ -337,7 +366,9 @@ func TestReadOffsetOutOfBound(t *testing.T) {
 }
 
 func TestScanSingle(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		e := make([]struct {
 			Time   time.Time
 			Offset uint64
@@ -383,7 +414,9 @@ func TestScanSingle(t *testing.T) {
 }
 
 func TestScanUnlimited(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		e := make([]struct {
 			Time   time.Time
 			Offset uint64
@@ -424,7 +457,9 @@ func TestScanUnlimited(t *testing.T) {
 }
 
 func TestScanExceedLenght(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		e := make([]struct {
 			Time   time.Time
 			Offset uint64
@@ -466,7 +501,9 @@ func TestScanExceedLenght(t *testing.T) {
 }
 
 func TestScanErrOffsetOutOfBound(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		var counter int
 		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
 			uint64, uint64, []byte, []byte,
@@ -501,7 +538,9 @@ func TestScanErrOffsetOutOfBound(t *testing.T) {
 }
 
 func TestScanReturnErr(t *testing.T) {
-	test(t, func(t *testing.T, l *eventlog.EventLog) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
 		e := make([]struct {
 			Time   time.Time
 			Offset uint64
@@ -544,32 +583,50 @@ func TestScanReturnErr(t *testing.T) {
 	})
 }
 
-func test(t *testing.T, fn func(*testing.T, *eventlog.EventLog)) {
+type Setup struct {
+	// Metadata holds the metadata that was used during log creation
+	Metadata map[string]string
+
+	EventLog *eventlog.EventLog
+}
+
+// test performes the given test function on all event log implementation
+func test(t *testing.T, fn func(*testing.T, Setup)) {
+	meta := func() map[string]string {
+		return map[string]string{"name": "testlog"}
+	}
 	t.Run("Inmem", func(t *testing.T) {
-		l := eventlog.New(inmem.New())
+		l := eventlog.New(inmem.New(meta()))
 		t.Cleanup(func() {
 			if err := l.Close(); err != nil {
 				panic(fmt.Errorf("closing eventlog: %s", err))
 			}
 		})
-		fn(t, l)
+		fn(t, Setup{
+			Metadata: meta(),
+			EventLog: l,
+		})
 	})
 
 	t.Run("File", func(t *testing.T) {
 		filePath := fmt.Sprintf(
-			"./test_%s_%s",
+			"%s/test_%s_%s",
+			t.TempDir(),
 			strings.ReplaceAll(t.Name(), "/", "_"),
 			time.Now().Format(time.RFC3339Nano),
 		)
 
-		e, err := enginefile.New(filePath)
+		err := logfile.Create(filePath, meta(), 0777)
+		require.NoError(t, err)
+
+		e, err := logfile.Open(filePath)
 		require.NoError(t, err)
 		require.NotNil(t, e)
-		t.Cleanup(func() {
-			require.NoError(t, os.Remove(filePath))
-		})
 
-		fn(t, eventlog.New(e))
+		fn(t, Setup{
+			Metadata: meta(),
+			EventLog: eventlog.New(e),
+		})
 	})
 }
 

@@ -12,10 +12,7 @@ import (
 	"github.com/valyala/fasthttp/fasthttputil"
 )
 
-func newSetup(handler fasthttp.RequestHandler) (
-	clt *fasthttp.Client,
-	teardown func(),
-) {
+func newSetup(t *testing.T, handler fasthttp.RequestHandler) *fasthttp.Client {
 	ln := fasthttputil.NewInmemoryListener()
 
 	api := fasthttp.Server{
@@ -27,16 +24,15 @@ func newSetup(handler fasthttp.RequestHandler) (
 		}
 	}()
 
-	teardown = func() {
+	t.Cleanup(func() {
 		ln.Close()
-	}
+	})
 
-	clt = &fasthttp.Client{
+	return &fasthttp.Client{
 		Dial: func(addr string) (net.Conn, error) {
 			return ln.Dial()
 		},
 	}
-	return
 }
 
 func TestWrite(t *testing.T) {
@@ -56,13 +52,12 @@ func TestWrite(t *testing.T) {
 		{18_364_758_544_493_064_720, "fedcba9876543210"},
 	} {
 		t.Run(fmt.Sprintf("%d->%q", tt.in, tt.out), func(t *testing.T) {
-			clt, teardown := newSetup(func(ctx *fasthttp.RequestCtx) {
+			clt := newSetup(t, func(ctx *fasthttp.RequestCtx) {
 				_, err := hex.WriteUint64(ctx, tt.in)
 				if err != nil {
 					panic(err)
 				}
 			})
-			defer teardown()
 			resp := fasthttp.AcquireResponse()
 			defer fasthttp.ReleaseResponse(resp)
 

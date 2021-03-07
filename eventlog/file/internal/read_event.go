@@ -14,9 +14,11 @@ type ReaderConf struct {
 	MaxPayloadLen uint32
 }
 
-// ReadEvent returns io.EOF when there's nothing more to read
+// ReadEvent reads an event entry from the given reader at the given offset.
+// Checks the read entry's integrity by validating the read checksum.
+// Returns io.EOF when there's nothing more to read.
 //
-// WARNING: lb and pl both reference the given buffer.
+// WARNING: returned label and payload slices both reference the given buffer.
 // WARNING: buffer must be at least the size of the sum of the
 // maximum possible payload and label lengths.
 func ReadEvent(
@@ -34,6 +36,7 @@ func ReadEvent(
 	err error,
 ) {
 	buffer.MustValidate(conf)
+	hasher.Reset()
 
 	buf8 := buffer[:8]
 	buf4 := buffer[:4]

@@ -25,8 +25,15 @@ import (
 )
 
 func test(t *testing.T, f func(*testing.T, Setup)) {
+	meta := func() map[string]string {
+		return map[string]string{
+			"foo":  "bar",
+			"bazz": "42",
+		}
+	}
+
 	setupHTTP := func(t *testing.T) (s Setup) {
-		s.DB = eventlog.New(inmem.New())
+		s.DB = eventlog.New(inmem.New(meta()))
 		t.Cleanup(func() {
 			if err := s.DB.Close(); err != nil {
 				panic(fmt.Errorf("closing eventlog: %s", err))
@@ -73,7 +80,7 @@ func test(t *testing.T, f func(*testing.T, Setup)) {
 	}
 
 	setupInmem := func(t *testing.T) (s Setup) {
-		s.DB = eventlog.New(inmem.New())
+		s.DB = eventlog.New(inmem.New(meta()))
 		t.Cleanup(func() {
 			if err := s.DB.Close(); err != nil {
 				panic(fmt.Errorf("closing eventlog: %s", err))
@@ -86,6 +93,26 @@ func test(t *testing.T, f func(*testing.T, Setup)) {
 
 	t.Run("HTTP", func(t *testing.T) { f(t, setupHTTP(t)) })
 	t.Run("Inmem", func(t *testing.T) { f(t, setupInmem(t)) })
+}
+
+func TestMetadata(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		r := require.New(t)
+
+		actual := make(map[string]string, s.DB.MetadataLen())
+		s.DB.ScanMetadata(func(f, v string) bool {
+			actual[f] = v
+			return true
+		})
+
+		fetched, err := s.Client.Metadata(context.Background())
+		r.NoError(err)
+		r.Len(fetched, len(actual))
+		for f, v := range actual {
+			r.Contains(fetched, f)
+			r.Equal(v, fetched[f])
+		}
+	})
 }
 
 func TestAppend(t *testing.T) {

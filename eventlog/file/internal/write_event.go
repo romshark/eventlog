@@ -11,22 +11,26 @@ import (
 
 type Hasher interface {
 	io.Writer
+	Reset()
 	Sum64() uint64
 }
 
-type Writer interface {
+type SyncWriter interface {
 	WriteAt(data []byte, offset int64) (int, error)
 	Sync() error
 }
 
 func WriteEvent(
-	writer Writer,
+	writer SyncWriter,
 	buffer []byte,
 	checksum uint64,
 	offset int64,
 	timestamp uint64,
 	event eventlog.Event,
 ) (written int, err error) {
+	if len(buffer) < 8 {
+		buffer = make([]byte, 8)
+	}
 	buf8 := buffer[:8]
 	buf4 := buffer[:4]
 	buf2 := buffer[:2]

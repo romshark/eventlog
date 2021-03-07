@@ -29,19 +29,31 @@ func CheckIntegrity(
 ) error {
 	buffer.MustValidate(readConfig)
 
-	if err := internal.ReadHeader(buffer, reader, checkVersion); err != nil {
+	hash := xxhash.New()
+
+	headerLen, err := internal.ReadHeader(
+		buffer,
+		reader,
+		hash,
+		readConfig,
+		func(field, value string) error {
+			// Ignore meta fields, but make sure they're parsed.
+			return nil
+		},
+	)
+	if err != nil {
 		return err
 	}
 
 	var previousTime uint64
 
-	for i := int64(FileHeaderLen); ; {
+	for i := int64(headerLen); ; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		checksum, timestamp, label, payload, n, err := internal.ReadEvent(
-			buffer, reader, xxhash.New(), i, readConfig,
+			buffer, reader, hash, i, readConfig,
 		)
 		if err == io.EOF {
 			break

@@ -96,7 +96,7 @@ type Setup struct {
 }
 
 func setup(t *testing.T) (s Setup) {
-	s.DB = eventlog.New(inmem.New())
+	s.DB = eventlog.New(inmem.New(map[string]string{"name": "testlog"}))
 	t.Cleanup(func() {
 		if err := s.DB.Close(); err != nil {
 			panic(fmt.Errorf("closing eventlog: %s", err))

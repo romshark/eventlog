@@ -21,12 +21,9 @@ const (
 	methodGet   = "GET"
 	methodPost  = "POST"
 	pathLog     = "log/"
+	pathMeta    = "meta"
 	pathVersion = "version"
 	pathBegin   = "begin"
-)
-
-var (
-	errOutOfBound = []byte("ErrOutOfBound")
 )
 
 // Make sure *HTTP implements Client
@@ -63,6 +60,43 @@ func NewHTTP(
 		clt:      clt,
 		wsDialer: wsDialer,
 	}
+}
+
+func (c *HTTP) Metadata(ctx context.Context) (map[string]string, error) {
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	req.SetHost(c.host)
+	req.Header.SetMethod(methodGet)
+	req.URI().SetPath(pathMeta)
+
+	var err error
+	if d, ok := ctx.Deadline(); ok {
+		err = c.clt.DoDeadline(req, resp, d)
+	} else {
+		err = c.clt.Do(req, resp)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+
+	if resp.StatusCode() != fasthttp.StatusOK {
+		return nil, fmt.Errorf(
+			"unexpected status code: %d (%q)",
+			resp.StatusCode(),
+			string(resp.Body()),
+		)
+	}
+
+	var m map[string]string
+	if err := json.Unmarshal(resp.Body(), &m); err != nil {
+		return nil, fmt.Errorf("unmarshalling response body: %w", err)
+	}
+
+	return m, nil
 }
 
 func (c *HTTP) Append(
@@ -120,7 +154,11 @@ func (c *HTTP) Append(
 		)
 		return
 	} else if resp.StatusCode() != fasthttp.StatusOK {
-		err = fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+		err = fmt.Errorf(
+			"unexpected status code: %d (%q)",
+			resp.StatusCode(),
+			string(resp.Body()),
+		)
 		return
 	}
 
@@ -165,11 +203,6 @@ func (c *HTTP) Read(
 		return Event{}, fmt.Errorf("http request: %w", err)
 	}
 
-	switch {
-	case resp.StatusCode() == fasthttp.StatusBadRequest &&
-		bytes.Equal(resp.Body(), errOutOfBound):
-	}
-
 	if resp.StatusCode() == fasthttp.StatusBadRequest {
 		switch {
 		case bytes.Equal(resp.Body(), consts.StatusMsgErrOffsetOutOfBound):
@@ -182,8 +215,9 @@ func (c *HTTP) Read(
 		)
 	} else if resp.StatusCode() != fasthttp.StatusOK {
 		return Event{}, fmt.Errorf(
-			"unexpected status code: %d",
+			"unexpected status code: %d (%q)",
 			resp.StatusCode(),
+			string(resp.Body()),
 		)
 	}
 
@@ -229,8 +263,9 @@ func (c *HTTP) Begin(ctx context.Context) (string, error) {
 
 	if resp.StatusCode() != fasthttp.StatusOK {
 		return "", fmt.Errorf(
-			"unexpected status code: %d",
+			"unexpected status code: %d (%q)",
 			resp.StatusCode(),
+			string(resp.Body()),
 		)
 	}
 
@@ -268,8 +303,9 @@ func (c *HTTP) Version(ctx context.Context) (string, error) {
 
 	if resp.StatusCode() != fasthttp.StatusOK {
 		return "", fmt.Errorf(
-			"unexpected status code: %d",
+			"unexpected status code: %d (%q)",
 			resp.StatusCode(),
+			string(resp.Body()),
 		)
 	}
 

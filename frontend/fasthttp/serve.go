@@ -30,6 +30,9 @@ func (s *Server) Serve(ctx *fasthttp.RequestCtx) {
 		case bytes.Equal(p, uriSubscription):
 			// GET /subscription
 			handle = s.handleSubscription
+		case bytes.Equal(p, uriMeta):
+			// GET /meta
+			handle = s.handleMeta
 		}
 	case bytes.Equal(m, methodPost):
 		switch {
