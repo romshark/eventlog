@@ -19,6 +19,25 @@ func NewInmem(e *eventlog.EventLog) *Inmem {
 	return &Inmem{e}
 }
 
+func (c *Inmem) Metadata(ctx context.Context) (
+	m map[string]string,
+	err error,
+) {
+	l := c.e.MetadataLen()
+	if l < 1 {
+		return nil, nil
+	}
+	m = make(map[string]string, l)
+	c.e.ScanMetadata(func(f, v string) bool {
+		if err = ctx.Err(); err != nil {
+			return false
+		}
+		m[f] = v
+		return true
+	})
+	return m, nil
+}
+
 func (c *Inmem) Append(
 	ctx context.Context,
 	assumeVersion bool,

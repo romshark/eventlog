@@ -29,13 +29,28 @@ func newInmemEvent(event eventlog.Event, tm time.Time) inmemEvent {
 
 // Inmem is a volatile in-memory event log
 type Inmem struct {
-	lock  sync.RWMutex
-	store []inmemEvent
+	metadata map[string]string
+	lock     sync.RWMutex
+	store    []inmemEvent
 }
 
 // New returns a new volatile in-memory event log instance
-func New() *Inmem {
-	return &Inmem{}
+func New(metadata map[string]string) *Inmem {
+	return &Inmem{
+		metadata: metadata,
+	}
+}
+
+func (l *Inmem) MetadataLen() int {
+	return len(l.metadata)
+}
+
+func (l *Inmem) ScanMetadata(fn func(field, value string) bool) {
+	for f, v := range l.metadata {
+		if !fn(f, v) {
+			return
+		}
+	}
 }
 
 func (l *Inmem) Version() uint64 {

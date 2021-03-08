@@ -1,8 +1,10 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -16,10 +18,7 @@ import (
 
 const (
 	// SupportedProtoVersion defines the supported protocol version
-	SupportedProtoVersion = 3
-
-	// FileHeaderLen defines the file header length in bytes
-	FileHeaderLen = 4
+	SupportedProtoVersion = 4
 
 	// EntryHeaderLen defines the entry header length in bytes
 	EntryHeaderLen = 22
@@ -47,50 +46,101 @@ var readConfig = internal.ReaderConf{
 
 // File is a persistent file-based event log
 type File struct {
-	filePath   string
-	lock       sync.RWMutex
-	file       *os.File
-	bufPool    *bufpool.Pool
-	tailOffset uint64
+	metadata     map[string]string
+	filePath     string
+	lock         sync.RWMutex
+	hasher       internal.Hasher
+	file         *os.File
+	bufPool      *bufpool.Pool
+	headerLength uint64
+	tailOffset   uint64
 }
 
-// New returns a new persistent file-based event log instance
-func New(filePath string) (*File, error) {
-	file, err := os.OpenFile(
-		filePath,
-		os.O_CREATE|os.O_RDWR|os.O_SYNC,
-		0664,
-	)
+// Open loads an event log from a file
+func Open(filePath string) (*File, error) {
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_SYNC, 0664)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening file: %w", err)
 	}
 
 	f := &File{
-		filePath:   filePath,
-		file:       file,
-		tailOffset: FileHeaderLen,
+		filePath: filePath,
+		file:     file,
+		hasher:   xxhash.New(),
 	}
 	f.bufPool = bufpool.NewPool(MaxPayloadLen + consts.MaxLabelLen)
 
 	b := f.bufPool.Get()
 	defer b.Release()
 	buf := b.Bytes()
+	buf = buf[:cap(buf)]
 
-	switch err := internal.ReadHeader(buf, f.file, checkVersion); err {
-	case io.EOF:
-		if err := internal.WriteFileHeader(
-			buf,
-			f.file,
-			SupportedProtoVersion,
-		); err != nil {
-			return nil, err
-		}
-	case nil:
-	default:
-		return nil, err
+	f.metadata = make(map[string]string)
+	headerLen, err := internal.ReadHeader(
+		buf,
+		f.file,
+		f.hasher,
+		internal.ReaderConf{
+			MinPayloadLen: MinPayloadLen,
+			MaxPayloadLen: MaxPayloadLen,
+		},
+		func(field, value string) error {
+			f.metadata[field] = value
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reading header: %w", err)
 	}
+	f.headerLength = uint64(headerLen)
+	f.tailOffset = f.headerLength
 
 	return f, nil
+}
+
+// Create creates a new persistent file-based event log
+func Create(
+	filePath string,
+	metadata map[string]string,
+	fsFileMode fs.FileMode,
+) error {
+	if _, err := os.Stat(filePath); err == nil {
+		return ErrExists
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading file stats: %w", err)
+	}
+
+	f, err := os.OpenFile(
+		filePath,
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+		fsFileMode,
+	)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := internal.WriteFileHeader(
+		f, xxhash.New(), metadata,
+	); err != nil {
+		return fmt.Errorf("writing file header: %w", err)
+	}
+
+	return nil
+}
+
+var ErrExists = errors.New("can't override existing file")
+
+func (f *File) MetadataLen() int {
+	return len(f.metadata)
+}
+
+func (f *File) ScanMetadata(fn func(field, value string) bool) {
+	for f, v := range f.metadata {
+		if !fn(f, v) {
+			return
+		}
+	}
 }
 
 // Close closes the file
@@ -113,7 +163,7 @@ func (f *File) Version() uint64 {
 }
 
 // FirstOffset implements EventLog.FirstOffset
-func (f *File) FirstOffset() uint64 { return FileHeaderLen }
+func (f *File) FirstOffset() uint64 { return f.headerLength }
 
 // Scan reads a maximum of n events starting at the given offset.
 // If offset+n exceeds the length of the log then a smaller number
@@ -127,7 +177,7 @@ func (f *File) Scan(
 	nextOffset uint64,
 	err error,
 ) {
-	if offset < FileHeaderLen {
+	if offset < f.headerLength {
 		return 0, eventlog.ErrOffsetOutOfBound
 	}
 
@@ -163,7 +213,7 @@ func (f *File) Scan(
 		var r uint64
 		for i, r = int64(offset), uint64(0); r < n; r++ {
 			_, tm, lb, pl, read, err = internal.ReadEvent(
-				buf, f.file, xxhash.New(), i, readConfig,
+				buf, f.file, f.hasher, i, readConfig,
 			)
 			if err == io.EOF {
 				err = nil
@@ -435,11 +485,4 @@ func (f *File) AppendCheckMulti(
 		events,
 	)
 	return
-}
-
-func checkVersion(version uint32) error {
-	if version != SupportedProtoVersion {
-		return fmt.Errorf("unsupported file version (%d)", version)
-	}
-	return nil
 }

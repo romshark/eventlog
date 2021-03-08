@@ -3,7 +3,6 @@ package file_test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,18 +14,20 @@ import (
 
 func TestChecksum(t *testing.T) {
 	filePath := fmt.Sprintf(
-		"./test_%s_%s",
+		"%s/test_%s_%s",
+		t.TempDir(),
 		strings.ReplaceAll(t.Name(), "/", "_"),
 		time.Now().Format(time.RFC3339Nano),
 	)
 
-	t.Cleanup(func() {
-		if err := os.Remove(filePath); err != nil {
-			t.Logf("cleaning up file: %s", err)
-		}
-	})
+	meta := map[string]string{
+		"name": "testlog",
+	}
 
-	l, err := file.New(filePath)
+	err := file.Create(filePath, meta, 0777)
+	require.NoError(t, err)
+
+	l, err := file.Open(filePath)
 	require.NoError(t, err)
 	require.NotNil(t, l)
 
@@ -51,4 +52,18 @@ func TestChecksum(t *testing.T) {
 		"unexpected error: %s", err,
 	)
 	require.Zero(t, nextOffset)
+
+	{
+		mf := make(map[string]string, l.MetadataLen())
+		l.ScanMetadata(func(field, value string) bool {
+			mf[field] = value
+			return true
+		})
+
+		require.Len(t, mf, len(meta))
+		for f, v := range meta {
+			require.Contains(t, mf, f)
+			require.Equal(t, v, mf[f])
+		}
+	}
 }

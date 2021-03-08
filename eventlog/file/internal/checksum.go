@@ -10,8 +10,6 @@ import (
 )
 
 // Checksum computes the 64-bit checksum hash for the given event.
-//
-// WARNING: the buffer must be at least 8 bytes long.
 func Checksum(
 	buffer []byte,
 	hasher Hasher,
@@ -19,6 +17,12 @@ func Checksum(
 	label []byte,
 	payload []byte,
 ) (checksum uint64, err error) {
+	if len(buffer) < 8 {
+		buffer = make([]byte, 8)
+	}
+
+	hasher.Reset()
+
 	write := func(data []byte) (failed bool) {
 		var n int
 		if n, err = hasher.Write(data); err != nil {

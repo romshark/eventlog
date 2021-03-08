@@ -131,6 +131,11 @@ func (c *Client) Scan(
 	return nil
 }
 
+// Metadata returns all metadata fields
+func (c *Client) Metadata(ctx context.Context) (map[string]string, error) {
+	return c.impl.Metadata(ctx)
+}
+
 // Read reads an event at the given offset version
 func (c *Client) Read(
 	ctx context.Context,
@@ -221,6 +226,8 @@ type Log interface {
 
 // Implementer represents a client implementer
 type Implementer interface {
+	Metadata(ctx context.Context) (map[string]string, error)
+
 	Append(
 		ctx context.Context,
 		assumeVersion bool,

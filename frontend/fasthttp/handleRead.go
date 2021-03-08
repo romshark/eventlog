@@ -11,14 +11,14 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-var (
-	partE1             = []byte(`{"time":"`)
-	partE2             = []byte(`","offset":"`)
-	partE3             = []byte(`","label":"`)
-	partE4             = []byte(`","payload":`)
-	partE5             = []byte(`,"next":"`)
-	partCloseBlock     = []byte(`}`)
-	partCloseBlockText = []byte(`"}`)
+const (
+	partE1             = `{"time":"`
+	partE2             = `","offset":"`
+	partE3             = `","label":"`
+	partE4             = `","payload":`
+	partE5             = `,"next":"`
+	partCloseBlock     = `}`
+	partCloseBlockText = `"}`
 )
 
 // handleRead handles GET /log/:offset
@@ -41,18 +41,18 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 			label []byte,
 			payloadJSON []byte,
 		) error {
-			_, _ = ctx.Write(partE1)
+			_, _ = ctx.WriteString(partE1)
 			buf = time.Unix(int64(timestamp), 0).AppendFormat(buf, time.RFC3339)
 			_, _ = ctx.Write(buf)
 			buf = buf[:0]
 
-			_, _ = ctx.Write(partE2)
+			_, _ = ctx.WriteString(partE2)
 			_, _ = hex.WriteUint64(ctx, offset)
 
-			_, _ = ctx.Write(partE3)
+			_, _ = ctx.WriteString(partE3)
 			_, _ = ctx.Write(label)
 
-			_, _ = ctx.Write(partE4)
+			_, _ = ctx.WriteString(partE4)
 			_, _ = ctx.Write(payloadJSON)
 
 			return nil
@@ -75,11 +75,11 @@ func (s *Server) handleRead(ctx *fasthttp.RequestCtx) error {
 	}
 
 	if nextOffset == 0 {
-		_, _ = ctx.Write(partCloseBlock)
+		_, _ = ctx.WriteString(partCloseBlock)
 	} else {
-		_, _ = ctx.Write(partE5)
+		_, _ = ctx.WriteString(partE5)
 		_, _ = hex.WriteUint64(ctx, nextOffset)
-		_, _ = ctx.Write(partCloseBlockText)
+		_, _ = ctx.WriteString(partCloseBlockText)
 	}
 
 	ctx.Response.SetStatusCode(fasthttp.StatusOK)

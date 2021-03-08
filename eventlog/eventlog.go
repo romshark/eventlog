@@ -36,6 +36,13 @@ func (e Event) Validate() error {
 
 // Implementer represents an event log engine's implementer
 type Implementer interface {
+	// MetadataLen returns the number of metadata fields
+	MetadataLen() int
+
+	// ScanMetadata iterates over all metadata fields calling fn for each.
+	// The scan is interrupted if fn returns false
+	ScanMetadata(fn func(field, value string) bool)
+
 	// Version returns the current version of the log
 	Version() uint64
 
@@ -139,6 +146,17 @@ func (e *EventLog) Version() uint64 {
 // FirstOffset returns the offset of the first entry in the log
 func (e *EventLog) FirstOffset() uint64 {
 	return e.impl.FirstOffset()
+}
+
+// MetadataLen returns the number of metadata fields
+func (e *EventLog) MetadataLen() int {
+	return e.impl.MetadataLen()
+}
+
+// ScanMetadata iterates over all metadata fields calling fn for each.
+// The scan is interrupted if fn returns false
+func (e *EventLog) ScanMetadata(fn func(field, value string) bool) {
+	e.impl.ScanMetadata(fn)
 }
 
 // Append appends an event with the given payload to the log

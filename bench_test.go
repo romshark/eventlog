@@ -24,14 +24,21 @@ func panicOnErr(err error) {
 	}
 }
 
-func newBenchmarkSetup(b *testing.B) (clt *client.Client, teardown func()) {
-	fileName := fmt.Sprintf(
-		"benchmark_%s_%s",
+func newBenchmarkSetup(b *testing.B) *client.Client {
+	filePath := fmt.Sprintf(
+		"%s/benchmark_%s_%s",
+		b.TempDir(),
 		b.Name(),
 		time.Now().Format(time.RFC3339Nano),
 	)
 
-	l, err := evfile.New(fileName)
+	meta := map[string]string{
+		"foo":  "bar",
+		"bazz": "42",
+	}
+	panicOnErr(evfile.Create(filePath, meta, 0777))
+
+	l, err := evfile.Open(filePath)
 	panicOnErr(err)
 
 	ln := fasthttputil.NewInmemoryListener()
@@ -48,14 +55,13 @@ func newBenchmarkSetup(b *testing.B) (clt *client.Client, teardown func()) {
 		}
 	}()
 
-	teardown = func() {
+	b.Cleanup(func() {
 		if err := httpServer.Shutdown(); err != nil {
 			panic(err)
 		}
-		os.Remove(fileName)
-	}
+	})
 
-	clt = client.New(
+	return client.New(
 		client.NewHTTP(
 			"test",
 			log.New(os.Stderr, "ERR", log.LstdFlags),
@@ -67,13 +73,10 @@ func newBenchmarkSetup(b *testing.B) (clt *client.Client, teardown func()) {
 			nil,
 		),
 	)
-
-	return
 }
 
 func BenchmarkFileHTTP_Append_P128(b *testing.B) {
-	clt, teardown := newBenchmarkSetup(b)
-	defer teardown()
+	clt := newBenchmarkSetup(b)
 
 	label := "BenchmarkEvent"
 	payload := []byte(`{
@@ -98,8 +101,7 @@ func BenchmarkFileHTTP_Append_P128(b *testing.B) {
 }
 
 func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
-	clt, teardown := newBenchmarkSetup(b)
-	defer teardown()
+	clt := newBenchmarkSetup(b)
 
 	label := "BenchmarkEvent"
 	payload := []byte(`{
@@ -134,8 +136,7 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 }
 
 func BenchmarkFileHTTP_Read_1K(b *testing.B) {
-	clt, teardown := newBenchmarkSetup(b)
-	defer teardown()
+	clt := newBenchmarkSetup(b)
 
 	const numEvents = uint(1000)
 
