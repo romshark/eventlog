@@ -101,7 +101,6 @@ func TestAppendRead(t *testing.T) {
 					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
 					require.WithinDuration(t, time.Now(), v.Time, time.Second)
 				default:
-					// Inbetween
 					p, v, n := events[i-1], events[i], events[i+1]
 					require.Equal(t, p.Version, v.VersionPrevious)
 					require.Equal(t, p.VersionNext, v.Version)
@@ -148,7 +147,6 @@ func TestAppendRead(t *testing.T) {
 					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
 					require.WithinDuration(t, time.Now(), v.Time, time.Second)
 				default:
-					// Inbetween
 					p, v, n := events[i+1], events[i], events[i-1]
 					require.Equal(t, p.Version, v.VersionPrevious)
 					require.Equal(t, p.VersionNext, v.Version)
