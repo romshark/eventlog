@@ -37,7 +37,7 @@ func main() {
 
 	case cli.ModeInmem:
 		eventLog := eventlog.New(inmem.New(m.MetaFields))
-		launchFrontendFastHTTP(logInfo, logErr, eventLog, m.HTTP)
+		launchAPIFastHTTP(logInfo, logErr, eventLog, m.HTTP)
 
 	case cli.ModeHelp:
 		cli.PrintHelp(os.Stdout, m.Command)

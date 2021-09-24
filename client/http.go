@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,25 +10,26 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/romshark/eventlog/internal/consts"
+	intrn "github.com/romshark/eventlog/internal"
+	"github.com/romshark/eventlog/internal/msgcodec"
 
 	"github.com/fasthttp/websocket"
 	"github.com/valyala/fasthttp"
 )
 
 const (
-	methodGet   = "GET"
-	methodPost  = "POST"
-	pathLog     = "log/"
-	pathMeta    = "meta"
-	pathVersion = "version"
-	pathBegin   = "begin"
+	methodGet          = "GET"
+	methodPost         = "POST"
+	pathLog            = "log/"
+	pathMeta           = "meta"
+	pathVersion        = "version"
+	pathVersionInitial = "version/initial"
 )
 
 // Make sure *HTTP implements Client
-var _ Implementer = new(HTTP)
+var _ Connecter = new(HTTP)
 
-// HTTP represents an HTTP eventlog client
+// HTTP is an HTTP eventlog connecter.
 type HTTP struct {
 	host     string
 	logErr   Log
@@ -37,7 +37,7 @@ type HTTP struct {
 	wsDialer *websocket.Dialer
 }
 
-// NewHTTP creates a new HTTP eventlog client
+// NewHTTP creates a connecter connecting to an eventlog's HTTP API.
 func NewHTTP(
 	host string,
 	logErr Log,
@@ -62,6 +62,7 @@ func NewHTTP(
 	}
 }
 
+// Metadata implements Connecter.Metadata.
 func (c *HTTP) Metadata(ctx context.Context) (map[string]string, error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -99,17 +100,11 @@ func (c *HTTP) Metadata(ctx context.Context) (map[string]string, error) {
 	return m, nil
 }
 
-func (c *HTTP) Append(
+func (c *HTTP) req(
 	ctx context.Context,
-	assumeVersion bool,
-	assumedVersion string,
-	eventsEncoded []byte,
-) (
-	offset string,
-	newVersion string,
-	tm time.Time,
-	err error,
-) {
+	prepare func(*fasthttp.Request),
+	handle func(*fasthttp.Response) error,
+) (err error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -117,17 +112,7 @@ func (c *HTTP) Append(
 	defer fasthttp.ReleaseResponse(resp)
 
 	req.SetHost(c.host)
-	req.Header.SetMethod(methodPost)
-	req.Header.SetContentType("application/octet-stream")
-
-	if assumeVersion {
-		req.URI().SetPath(pathLog + assumedVersion)
-	} else {
-		req.URI().SetPath(pathLog)
-	}
-
-	req.SetBody(eventsEncoded)
-
+	prepare(req)
 	if d, ok := ctx.Deadline(); ok {
 		err = c.clt.DoDeadline(req, resp, d)
 	} else {
@@ -137,187 +122,414 @@ func (c *HTTP) Append(
 		err = fmt.Errorf("http request: %w", err)
 		return
 	}
-
-	if resp.StatusCode() == fasthttp.StatusBadRequest {
-		switch {
-		case bytes.Equal(resp.Body(), consts.StatusMsgErrMismatchingVersions):
-			err = ErrMismatchingVersions
-			return
-		case bytes.Equal(resp.Body(), consts.StatusMsgErrInvalidPayload):
-			err = ErrInvalidPayload
-			return
-		}
-		err = fmt.Errorf(
-			"unexpected client-side error: (%d) %s",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
-		return
-	} else if resp.StatusCode() != fasthttp.StatusOK {
-		err = fmt.Errorf(
-			"unexpected status code: %d (%q)",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
-		return
-	}
-
-	var re struct {
-		Offset     string    `json:"offset"`
-		NewVersion string    `json:"newVersion"`
-		Time       time.Time `json:"time"`
-	}
-	if err = json.Unmarshal(resp.Body(), &re); err != nil {
-		err = fmt.Errorf("unmarshalling response: %w", err)
-		return
-	}
-
-	return re.Offset, re.NewVersion, re.Time, nil
+	return handle(resp)
 }
 
-// Read implements Client.Read
+// Append implements Connecter.Append.
+func (c *HTTP) Append(
+	ctx context.Context,
+	event EventData,
+) (
+	versionPrevious Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var encoded []byte
+	if encoded, err = msgcodec.EncodeBinary(event); err != nil {
+		return
+	}
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodPost)
+			r.Header.SetContentType("application/octet-stream")
+			r.URI().SetPath(pathLog)
+			r.SetBody(encoded)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() == fasthttp.StatusBadRequest {
+				switch {
+				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
+					return ErrMismatchingVersions
+				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
+					return ErrInvalidPayload
+				}
+				return fmt.Errorf(
+					"unexpected client-side error: (%d) %s",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			} else if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
+
+			var re struct {
+				VersionPrevious Version   `json:"version-previous"`
+				Version         Version   `json:"version"`
+				Time            time.Time `json:"time"`
+			}
+			if err = json.Unmarshal(r.Body(), &re); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+
+			versionPrevious = re.VersionPrevious
+			version = re.Version
+			tm = re.Time
+			return nil
+		},
+	)
+	return
+}
+
+// AppendMulti implements Connecter.AppendMulti.
+func (c *HTTP) AppendMulti(
+	ctx context.Context,
+	events ...EventData,
+) (
+	versionPrevious Version,
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var encoded []byte
+	if encoded, err = msgcodec.EncodeBinary(events...); err != nil {
+		return
+	}
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodPost)
+			r.Header.SetContentType("application/octet-stream")
+			r.URI().SetPath(pathLog)
+			r.SetBody(encoded)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() == fasthttp.StatusBadRequest {
+				switch {
+				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
+					return ErrMismatchingVersions
+				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
+					return ErrInvalidPayload
+				}
+				return fmt.Errorf(
+					"unexpected client-side error: (%d) %s",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			} else if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
+
+			var re struct {
+				VersionPrevious Version   `json:"version-previous"`
+				VersionFirst    Version   `json:"version-first"`
+				Version         Version   `json:"version"`
+				Time            time.Time `json:"time"`
+			}
+			if err = json.Unmarshal(r.Body(), &re); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+
+			version = re.Version
+			versionPrevious = re.VersionPrevious
+			versionFirst = re.VersionFirst
+			tm = re.Time
+			return nil
+		},
+	)
+	return
+}
+
+// AppendCheck implements Connecter.AppendCheck.
+func (c *HTTP) AppendCheck(
+	ctx context.Context,
+	assumedVersion Version,
+	event EventData,
+) (
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var encoded []byte
+	if encoded, err = msgcodec.EncodeBinary(event); err != nil {
+		return
+	}
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodPost)
+			r.Header.SetContentType("application/octet-stream")
+			r.URI().SetPath(pathLog + assumedVersion)
+			r.SetBody(encoded)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() == fasthttp.StatusBadRequest {
+				switch {
+				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
+					return ErrMismatchingVersions
+				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
+					return ErrInvalidPayload
+				}
+				return fmt.Errorf(
+					"unexpected client-side error: (%d) %s",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			} else if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
+
+			var re struct {
+				Version Version   `json:"version"`
+				Time    time.Time `json:"time"`
+			}
+			if err = json.Unmarshal(r.Body(), &re); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+
+			version = re.Version
+			tm = re.Time
+			return nil
+		},
+	)
+	return
+}
+
+// AppendCheckMulti implements Connecter.AppendCheckMulti.
+func (c *HTTP) AppendCheckMulti(
+	ctx context.Context,
+	assumedVersion Version,
+	events ...EventData,
+) (
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var encoded []byte
+	if encoded, err = msgcodec.EncodeBinary(events...); err != nil {
+		return
+	}
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodPost)
+			r.Header.SetContentType("application/octet-stream")
+			r.URI().SetPath(pathLog + assumedVersion)
+			r.SetBody(encoded)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() == fasthttp.StatusBadRequest {
+				switch {
+				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
+					return ErrMismatchingVersions
+				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
+					return ErrInvalidPayload
+				}
+				return fmt.Errorf(
+					"unexpected client-side error: (%d) %s",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			} else if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
+
+			var re struct {
+				VersionFirst Version   `json:"version-first"`
+				Version      Version   `json:"version"`
+				Time         time.Time `json:"time"`
+			}
+			if err = json.Unmarshal(r.Body(), &re); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+
+			version = re.Version
+			versionFirst = re.VersionFirst
+			tm = re.Time
+			return nil
+		},
+	)
+	return
+}
+
+// Scan implements Connecter.Scan.
 //
 // WARNING: manually cancelable (non-timeout and non-deadline) contexts
 // are not supported.
-func (c *HTTP) Read(
+func (c *HTTP) Scan(
 	ctx context.Context,
-	offset string,
-) (Event, error) {
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
+	version Version,
+	reverse bool,
+	fn func(Event) error,
+) error {
+	for {
+		if err := c.req(
+			ctx,
+			func(r *fasthttp.Request) {
+				r.Header.SetMethod(methodGet)
+				r.URI().SetPath(pathLog + version)
+				if reverse {
+					r.URI().QueryArgs().Set("reverse", "true")
+				}
+			},
+			func(r *fasthttp.Response) error {
+				if r.StatusCode() == fasthttp.StatusBadRequest {
+					switch {
+					case string(r.Body()) == intrn.StatusMsgErrMalformedVersion:
+						return ErrMalformedVersion
+					case string(r.Body()) == intrn.StatusMsgErrInvalidVersion:
+						return ErrInvalidVersion
+					}
+					return fmt.Errorf(
+						"unexpected client-side error: (%d) %s",
+						r.StatusCode(),
+						string(r.Body()),
+					)
+				} else if r.StatusCode() != fasthttp.StatusOK {
+					return fmt.Errorf(
+						"unexpected status code: %d (%q)",
+						r.StatusCode(),
+						string(r.Body()),
+					)
+				}
 
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
+				var l []struct {
+					Version         Version         `json:"version"`
+					Time            time.Time       `json:"time"`
+					VersionPrevious Version         `json:"version-previous"`
+					VersionNext     Version         `json:"version-next"`
+					Label           json.RawMessage `json:"label"`
+					Payload         json.RawMessage `json:"payload"`
+				}
+				if err := json.Unmarshal(r.Body(), &l); err != nil {
+					return fmt.Errorf("unmarshalling response body: %w", err)
+				}
 
-	req.SetHost(c.host)
-	req.Header.SetMethod(methodGet)
-	req.URI().SetPath(pathLog + offset)
+				for _, e := range l {
+					if err := fn(Event{
+						Version:         e.Version,
+						Time:            e.Time.UTC(),
+						VersionPrevious: e.VersionPrevious,
+						VersionNext:     e.VersionNext,
+						EventData: EventData{
+							Label:       e.Label[1 : len(e.Label)-1],
+							PayloadJSON: e.Payload,
+						},
+					}); err != nil {
+						return err
+					}
+					if !reverse && e.VersionNext == "0" ||
+						reverse && e.VersionPrevious == "0" {
+						return errAbortScan
+					}
+				}
 
-	var err error
-	if d, ok := ctx.Deadline(); ok {
-		err = c.clt.DoDeadline(req, resp, d)
-	} else {
-		err = c.clt.Do(req, resp)
-	}
-	if err != nil {
-		return Event{}, fmt.Errorf("http request: %w", err)
-	}
-
-	if resp.StatusCode() == fasthttp.StatusBadRequest {
-		switch {
-		case bytes.Equal(resp.Body(), consts.StatusMsgErrOffsetOutOfBound):
-			return Event{}, ErrOffsetOutOfBound
+				if reverse {
+					version = l[len(l)-1].VersionPrevious
+				} else {
+					version = l[len(l)-1].VersionNext
+				}
+				return nil
+			},
+		); err == errAbortScan {
+			break
+		} else if err != nil {
+			return err
 		}
-		return Event{}, fmt.Errorf(
-			"unexpected client-side error: (%d) %s",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
-	} else if resp.StatusCode() != fasthttp.StatusOK {
-		return Event{}, fmt.Errorf(
-			"unexpected status code: %d (%q)",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
 	}
-
-	var e struct {
-		Offset  string          `json:"offset"`
-		Time    time.Time       `json:"time"`
-		Next    string          `json:"next"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	if err := json.Unmarshal(resp.Body(), &e); err != nil {
-		return Event{}, fmt.Errorf("unmarshalling response body: %w", err)
-	}
-
-	return Event{
-		Offset:  e.Offset,
-		Time:    e.Time,
-		Next:    e.Next,
-		Payload: e.Payload,
-	}, nil
+	return nil
 }
 
-// Begin implements Client.Begin
-func (c *HTTP) Begin(ctx context.Context) (string, error) {
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
+var errAbortScan = errors.New("as")
 
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
+// VersionInitial implements Connecter.VersionInitial.
+func (c *HTTP) VersionInitial(
+	ctx context.Context,
+) (version Version, err error) {
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodGet)
+			r.URI().SetPath(pathVersionInitial)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
+			b := r.Body()
+			if len(b) < 14 {
+				return fmt.Errorf(
+					"unexpected response body: %s",
+					string(b),
+				)
+			}
 
-	req.SetHost(c.host)
-	req.Header.SetMethod(methodGet)
-	req.URI().SetPath(pathBegin)
-
-	var err error
-	if d, ok := ctx.Deadline(); ok {
-		err = c.clt.DoDeadline(req, resp, d)
-	} else {
-		err = c.clt.Do(req, resp)
-	}
-	if err != nil {
-		return "", fmt.Errorf("http request: %w", err)
-	}
-
-	if resp.StatusCode() != fasthttp.StatusOK {
-		return "", fmt.Errorf(
-			"unexpected status code: %d (%q)",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
-	}
-
-	b := resp.Body()
-	if len(b) < 14 {
-		return "", fmt.Errorf(
-			"unexpected response body: %s",
-			string(b),
-		)
-	}
-
-	return string(b[11 : len(b)-2]), nil
+			var re struct {
+				VersionInitial Version `json:"version-initial"`
+			}
+			if err = json.Unmarshal(r.Body(), &re); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+			version = re.VersionInitial
+			return nil
+		},
+	)
+	return
 }
 
-func (c *HTTP) Version(ctx context.Context) (string, error) {
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
+// Version implements Connecter.Version.
+func (c *HTTP) Version(ctx context.Context) (version Version, err error) {
+	err = c.req(
+		ctx,
+		func(r *fasthttp.Request) {
+			r.Header.SetMethod(methodGet)
+			r.URI().SetPath(pathVersion)
+		},
+		func(r *fasthttp.Response) error {
+			if r.StatusCode() != fasthttp.StatusOK {
+				return fmt.Errorf(
+					"unexpected status code: %d (%q)",
+					r.StatusCode(),
+					string(r.Body()),
+				)
+			}
 
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
+			b := r.Body()
+			if len(b) < 14 {
+				return fmt.Errorf(
+					"unexpected response body: %s",
+					string(b),
+				)
+			}
 
-	req.SetHost(c.host)
-	req.Header.SetMethod(methodGet)
-	req.URI().SetPath(pathVersion)
-
-	var err error
-	if d, ok := ctx.Deadline(); ok {
-		err = c.clt.DoDeadline(req, resp, d)
-	} else {
-		err = c.clt.Do(req, resp)
-	}
-	if err != nil {
-		return "", fmt.Errorf("http request: %w", err)
-	}
-
-	if resp.StatusCode() != fasthttp.StatusOK {
-		return "", fmt.Errorf(
-			"unexpected status code: %d (%q)",
-			resp.StatusCode(),
-			string(resp.Body()),
-		)
-	}
-
-	b := resp.Body()
-	if len(b) < 14 {
-		return "", fmt.Errorf(
-			"unexpected response body: %s",
-			string(b),
-		)
-	}
-
-	return string(b[12 : len(b)-2]), nil
+			version = string(b[12 : len(b)-2])
+			return nil
+		},
+	)
+	return
 }
 
 // Listen establishes a websocket connection to the server

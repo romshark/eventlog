@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/romshark/eventlog/eventlog"
 )
@@ -14,6 +15,7 @@ const MaxMetaDataLen = 4294967295
 func WriteFileHeader(
 	writer SyncWriter,
 	hasher Hasher,
+	creation time.Time,
 	metadata map[string]string,
 ) (written int, err error) {
 	metadataJSON, err := json.Marshal(metadata)
@@ -32,9 +34,10 @@ func WriteFileHeader(
 	if metaChecksum, err = Checksum(
 		nil,
 		hasher,
-		0,
+		uint64(creation.Unix()),
 		nil,
 		metadataJSON,
+		0,
 	); err != nil {
 		err = fmt.Errorf("computing checksum: %w", err)
 		return
@@ -42,7 +45,7 @@ func WriteFileHeader(
 
 	// Write version
 	bufU32 := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bufU32, 4)
+	binary.LittleEndian.PutUint32(bufU32, SupportedProtoVersion)
 	if _, err := writer.WriteAt(bufU32, 0); err != nil {
 		return 0, fmt.Errorf("writing header version: %w", err)
 	}
@@ -52,8 +55,13 @@ func WriteFileHeader(
 		writer,
 		nil,
 		metaChecksum,
-		4, 0,
-		eventlog.Event{PayloadJSON: metadataJSON},
+		4,
+		eventlog.Event{
+			Timestamp: uint64(creation.Unix()),
+			EventData: eventlog.EventData{
+				PayloadJSON: metadataJSON,
+			},
+		},
 	)
 	written += metaEntryLen
 	if err != nil {

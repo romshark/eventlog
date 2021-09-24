@@ -3,10 +3,6 @@ package internal
 import (
 	"encoding/binary"
 	"fmt"
-	"testing"
-
-	"github.com/cespare/xxhash"
-	"github.com/stretchr/testify/require"
 )
 
 // Checksum computes the 64-bit checksum hash for the given event.
@@ -16,6 +12,7 @@ func Checksum(
 	timestamp uint64,
 	label []byte,
 	payload []byte,
+	versionPrevious uint64,
 ) (checksum uint64, err error) {
 	if len(buffer) < 8 {
 		buffer = make([]byte, 8)
@@ -54,30 +51,17 @@ func Checksum(
 	if write(buf4) {
 		return
 	}
-	if len(label) > 0 {
-		if write(label) {
-			return
-		}
+	if len(label) > 0 && write(label) {
+		return
 	}
 	if write(payload) {
 		return
 	}
-	return hasher.Sum64(), nil
-}
 
-func ChecksumT(
-	t *testing.T,
-	timestamp uint64,
-	label string,
-	payload string,
-) uint64 {
-	checksum, err := Checksum(
-		make([]byte, 8),
-		xxhash.New(),
-		timestamp,
-		[]byte(label),
-		[]byte(payload),
-	)
-	require.NoError(t, err)
-	return checksum
+	binary.LittleEndian.PutUint64(buf8, versionPrevious)
+	if write(buf8) {
+		return
+	}
+
+	return hasher.Sum64(), nil
 }

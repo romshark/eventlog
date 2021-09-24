@@ -22,12 +22,12 @@ func ReadHeader(
 	if _, err := reader.ReadAt(buf4, 0); err != nil {
 		return 0, fmt.Errorf("reading version: %w", err)
 	}
-	if v := binary.LittleEndian.Uint32(buf4); v != 4 {
+	if v := binary.LittleEndian.Uint32(buf4); v != SupportedProtoVersion {
 		return headerLen, fmt.Errorf("unsupported file version (%d)", v)
 	}
 	headerLen += 4
 
-	_, _, _, payload, ln, err := ReadEvent(
+	_, e, ln, err := ReadEvent(
 		buffer, reader, hasher, 4, conf,
 	)
 	if err != nil {
@@ -37,7 +37,7 @@ func ReadHeader(
 
 	if onMeta != nil {
 		var metadata map[string]string
-		if err := json.Unmarshal(payload, &metadata); err != nil {
+		if err := json.Unmarshal(e.PayloadJSON, &metadata); err != nil {
 			return 0, fmt.Errorf("decoding metadata JSON: %w", err)
 		}
 		for f, v := range metadata {
@@ -50,12 +50,10 @@ func ReadHeader(
 	return headerLen, nil
 }
 
-// // Read version
-// if buf := readNext(4); buf == nil {
-// 	return nil, headerLen, fmt.Errorf("reading version: %w", err)
-// } else if v := binary.LittleEndian.Uint32(buf); v != 4 {
-// 	return nil, headerLen, fmt.Errorf("unsupported file version (%d)", v)
-// }
+type OffsetLenReader interface {
+	OffsetReader
+	Len() (uint64, error)
+}
 
 type OffsetReader interface {
 	ReadAt(buf []byte, offset int64) (read int, err error)

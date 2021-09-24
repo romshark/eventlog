@@ -1,4 +1,4 @@
-package internal_test
+package test
 
 import (
 	"testing"
@@ -17,6 +17,12 @@ type ReadRecorder struct {
 }
 
 func (r *ReadRecorder) ReadAt(buffer []byte, offset int64) (int, error) {
+	require.True(
+		r.t,
+		r.current < len(r.expect),
+		"unexpected read: %d (expected only %d) at offset %d (%q)",
+		r.current+1, len(r.expect), offset, buffer,
+	)
 	expected := r.expect[r.current]
 	r.current++
 	require.Equal(r.t, expected.Offset, offset)

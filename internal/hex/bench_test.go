@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/romshark/eventlog/internal/hex"
+
 	"github.com/valyala/fasthttp"
 )
 

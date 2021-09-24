@@ -7,53 +7,72 @@ import (
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/internal/consts"
-	"github.com/romshark/eventlog/internal/msgcodec"
+	"github.com/romshark/eventlog/internal"
 )
 
-// Event represents a logged event
+type Version = string
+
 type Event struct {
-	Offset  string    `json:"offset"`
-	Time    time.Time `json:"time"`
-	Label   []byte    `json:"label"`
-	Payload []byte    `json:"payload"`
-	Next    string    `json:"next"`
+	EventData
+	Time            time.Time `json:"time"`
+	Version         Version   `json:"version"`
+	VersionNext     Version   `json:"version-next"`
+	VersionPrevious Version   `json:"version-previous"`
 }
+
+type EventData = eventlog.EventData
 
 type Client struct {
-	impl Implementer
+	impl Connecter
 }
 
-// New creates a new eventlog client
-func New(impl Implementer) *Client {
+// New creates a new eventlog client.
+func New(impl Connecter) *Client {
 	return &Client{
 		impl: impl,
 	}
 }
 
-// Append appends one or multiple new events onto the log.
+// Append appends a new event onto the log.
 func (c *Client) Append(
 	ctx context.Context,
-	events ...eventlog.Event,
+	event EventData,
 ) (
-	offset string,
-	newVersion string,
+	versionPrevious Version,
+	version Version,
 	tm time.Time,
 	err error,
 ) {
-	return c.append(ctx, false, "", events...)
+	return c.impl.Append(ctx, event)
 }
 
-// AppendCheck appends one or multiple new events onto the logs
-// if the assumed version matches the actual log version,
+// AppendMulti appends one or multiple new events onto the log.
+func (c *Client) AppendMulti(
+	ctx context.Context,
+	events ...EventData,
+) (
+	versionPrevious Version,
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	if len(events) < 1 {
+		err = ErrNoEvents
+		return
+	}
+	return c.impl.AppendMulti(ctx, events...)
+}
+
+// AppendCheck appends a new event onto the log
+// if the assumed version matches the latest log version,
 // otherwise the operation is rejected and ErrMismatchingVersions is returned.
 func (c *Client) AppendCheck(
 	ctx context.Context,
-	assumedVersion string,
-	events ...eventlog.Event,
+	assumedVersion Version,
+	event EventData,
 ) (
-	offset string,
-	newVersion string,
+	version Version,
 	tm time.Time,
 	err error,
 ) {
@@ -61,95 +80,59 @@ func (c *Client) AppendCheck(
 		err = ErrInvalidVersion
 		return
 	}
-	return c.append(ctx, true, assumedVersion, events...)
+	return c.impl.AppendCheck(ctx, assumedVersion, event)
 }
 
-func (c *Client) append(
+// AppendCheckMulti appends one or multiple new events onto the log
+// if the assumed version matches the latest log version,
+// otherwise the operation is rejected and ErrMismatchingVersions is returned.
+func (c *Client) AppendCheckMulti(
 	ctx context.Context,
-	assumeVersion bool,
-	assumedVersion string,
-	events ...eventlog.Event,
+	assumedVersion Version,
+	events ...EventData,
 ) (
-	offset string,
-	newVersion string,
+	versionFirst Version,
+	version Version,
 	tm time.Time,
 	err error,
 ) {
-	var b []byte
-	b, err = msgcodec.EncodeBinary(events...)
-	if err != nil {
+	if assumedVersion == "" {
+		err = ErrInvalidVersion
 		return
 	}
-	if b == nil {
+	if len(events) < 1 {
+		err = ErrNoEvents
 		return
 	}
-
-	return c.impl.Append(
-		ctx,
-		assumeVersion,
-		assumedVersion,
-		b,
-	)
+	return c.impl.AppendCheckMulti(ctx, assumedVersion, events...)
 }
 
-// Scan reads a limited number of events at the given offset version
-// calling the onEvent callback for every received event
-func (c *Client) Scan(
-	ctx context.Context,
-	version string,
-	limit uint,
-	onEvent func(
-		offset string,
-		timestamp time.Time,
-		label []byte,
-		payload []byte,
-		next string,
-	) error,
-) error {
-	for i := uint(0); ; i++ {
-		if limit > 0 && i >= limit {
-			break
-		}
-		e, err := c.impl.Read(ctx, version)
-		if err != nil {
-			return err
-		}
-		if err := onEvent(
-			e.Offset,
-			e.Time,
-			e.Label,
-			e.Payload,
-			e.Next,
-		); err != nil {
-			return err
-		}
-		if e.Next == "" {
-			break
-		}
-		version = e.Next
-	}
-	return nil
-}
-
-// Metadata returns all metadata fields
+// Metadata returns all metadata fields.
 func (c *Client) Metadata(ctx context.Context) (map[string]string, error) {
 	return c.impl.Metadata(ctx)
 }
 
-// Read reads an event at the given offset version
-func (c *Client) Read(
+// Scan reads events at the given version
+// calling fn for every received event.
+// Scans in reverse if reverse == true.
+func (c *Client) Scan(
 	ctx context.Context,
-	version string,
-) (Event, error) {
-	return c.impl.Read(ctx, version)
+	version Version,
+	reverse bool,
+	fn func(Event) error,
+) error {
+	return c.impl.Scan(ctx, version, reverse, fn)
 }
 
-// Begin implements Client.Begin
-func (c *Client) Begin(ctx context.Context) (string, error) {
-	return c.impl.Begin(ctx)
+// VersionInitial returns either the first version of the log or
+// "0" if the log is empty.
+func (c *Client) VersionInitial(ctx context.Context) (Version, error) {
+	return c.impl.VersionInitial(ctx)
 }
 
-func (c *Client) Version(ctx context.Context) (string, error) {
+// Version returns the latest version of the log or
+// "0" if the log is empty.
+func (c *Client) Version(ctx context.Context) (Version, error) {
 	return c.impl.Version(ctx)
 }
 
@@ -161,15 +144,15 @@ func (c *Client) Listen(ctx context.Context, onUpdate func([]byte)) error {
 }
 
 // TryAppend keeps executing transaction until either cancelled,
-// succeeded (assumed and actual event log versions match) or failed due to an error.
+// succeeded (assumed == latest event log version) or failed due to an error.
 func (c *Client) TryAppend(
 	ctx context.Context,
-	assumedVersion string,
-	transaction func() (events []eventlog.Event, err error),
-	sync func() (string, error),
+	assumedVersion Version,
+	transaction func() (event EventData, err error),
+	sync func() (Version, error),
 ) (
-	offset string,
-	newVersion string,
+	versionPrevious Version,
+	version Version,
 	tm time.Time,
 	err error,
 ) {
@@ -180,74 +163,159 @@ func (c *Client) TryAppend(
 			return
 		}
 
-		var events []eventlog.Event
-		if events, err = transaction(); err != nil {
+		var event EventData
+		if event, err = transaction(); err != nil {
 			return
 		}
 
-		// Try to append new events onto the event log
-		offset, newVersion, tm, err = c.AppendCheck(
-			ctx,
-			assumedVersion,
-			events...,
-		)
+		version, tm, err = c.AppendCheck(ctx, assumedVersion, event)
 		switch {
 		case errors.Is(err, ErrMismatchingVersions):
-			// The projection is out of sync, synchronize & repeat
+			// The projection is out of sync,
+			// synchronize, update assumed version and repeat
 			if assumedVersion, err = sync(); err != nil {
 				return
 			}
 			continue
 		case err != nil:
-			// Append failed for unexpected reason
+			// Append failed for unexpected reasons
+			version = ""
+			tm = time.Time{}
 			return
 		}
 
 		// Transaction successfully committed
+		versionPrevious = assumedVersion
 		break
 	}
 	return
 }
 
+// TryAppendMulti keeps executing transaction until either cancelled,
+// succeeded (assumed == latest event log version) or failed due to an error.
+func (c *Client) TryAppendMulti(
+	ctx context.Context,
+	assumedVersion Version,
+	transaction func() (events []EventData, err error),
+	sync func() (Version, error),
+) (
+	versionPrevious Version,
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	// Reapeat until either cancelled, succeeded or failed
+	for {
+		// Check context for cancelation
+		if err = ctx.Err(); err != nil {
+			return
+		}
+
+		var events []EventData
+		if events, err = transaction(); err != nil {
+			return
+		}
+
+		versionFirst, version, tm, err = c.AppendCheckMulti(
+			ctx, assumedVersion, events...,
+		)
+		switch {
+		case errors.Is(err, ErrMismatchingVersions):
+			// The projection is out of sync,
+			// synchronize, update assumed version and repeat
+			if assumedVersion, err = sync(); err != nil {
+				return
+			}
+			continue
+		case err != nil:
+			// Append failed for unexpected reasons
+			versionFirst = ""
+			version = ""
+			tm = time.Time{}
+			return
+		}
+
+		// Transaction successfully committed
+		versionPrevious = assumedVersion
+		break
+	}
+	return
+}
+
+// Error values
 var (
-	ErrOffsetOutOfBound    = eventlog.ErrOffsetOutOfBound
 	ErrMismatchingVersions = eventlog.ErrMismatchingVersions
 	ErrInvalidPayload      = eventlog.ErrInvalidPayload
 	ErrInvalidVersion      = errors.New("invalid version")
+	ErrMalformedVersion    = errors.New("malformed version")
 	ErrLabelTooLong        = fmt.Errorf(
 		"label must not exceed %d bytes",
-		consts.MaxLabelLen,
+		internal.MaxLabelLen,
 	)
+	ErrNoEvents = errors.New("no events")
 )
 
 type Log interface {
 	Printf(format string, v ...interface{})
 }
 
-// Implementer represents a client implementer
-type Implementer interface {
+// Connecter represents an eventlog connecter.
+type Connecter interface {
 	Metadata(ctx context.Context) (map[string]string, error)
 
 	Append(
 		ctx context.Context,
-		assumeVersion bool,
-		assumedVersion string,
-		eventsEncoded []byte,
+		event EventData,
 	) (
-		offset string,
-		newVersion string,
+		versionPrevious Version,
+		version Version,
 		tm time.Time,
 		err error,
 	)
 
-	Read(
+	AppendMulti(
 		ctx context.Context,
-		offset string,
-	) (Event, error)
+		events ...EventData,
+	) (
+		versionPrevious Version,
+		versionFirst Version,
+		version Version,
+		tm time.Time,
+		err error,
+	)
 
-	Begin(context.Context) (string, error)
+	AppendCheck(
+		ctx context.Context,
+		assumedVersion Version,
+		event EventData,
+	) (
+		version Version,
+		tm time.Time,
+		err error,
+	)
 
-	Version(context.Context) (string, error)
+	AppendCheckMulti(
+		ctx context.Context,
+		assumedVersion Version,
+		eventsEncoded ...EventData,
+	) (
+		versionFirst Version,
+		version Version,
+		tm time.Time,
+		err error,
+	)
+
+	Scan(
+		ctx context.Context,
+		version Version,
+		reverse bool,
+		fn func(Event) error,
+	) error
+
+	VersionInitial(context.Context) (Version, error)
+
+	Version(context.Context) (Version, error)
 
 	Listen(ctx context.Context, onUpdate func([]byte)) error
 }

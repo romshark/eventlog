@@ -1,6 +1,9 @@
 package cli
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 type ModeCheck struct {
 	Path    string
@@ -15,7 +18,10 @@ func parseModeCheck(args []string) (m ModeCheck, err error) {
 
 	flags := newFlagSet()
 	verbose := flags.Bool(ParamVerbose, DefaultCheckVerbose, "Print progress")
-	flags.Parse(args[1:])
+	if err = flags.Parse(args[1:]); err != nil {
+		err = fmt.Errorf("parsing flags: %w", err)
+		return
+	}
 
 	m.Verbose = *verbose
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/romshark/eventlog/cmd/eventlog/cli"
+	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/file"
 	enginefile "github.com/romshark/eventlog/eventlog/file"
 )
@@ -50,12 +51,13 @@ func handleCheck(
 	defer fl.Close()
 
 	onEvent := func(
-		offset int64,
 		checksum uint64,
-		timestamp uint64,
-		label []byte,
-		payload []byte,
+		e eventlog.Event,
 	) error {
+		if ctx.Err() != nil {
+			return err
+		}
+
 		// Integrity check progress
 		logInfo.Printf(
 			"%.2f: Valid entry at offset %d\n"+
@@ -63,34 +65,37 @@ func handleCheck(
 				" label:           %q\n"+
 				" payload (bytes): %d\n"+
 				" checksum:        %d\n",
-			float64(offset)/float64(fileSize)*100,
-			offset,
-			time.Unix(int64(timestamp), 0),
-			string(label),
-			len(payload),
+			float64(e.Version)/float64(fileSize)*100,
+			e.Version,
+			time.Unix(int64(e.Timestamp), 0),
+			string(e.Label),
+			len(e.PayloadJSON),
 			checksum,
 		)
 		return nil
 	}
 
 	if !m.Verbose {
-		onEvent = func(
-			offset int64,
-			checksum uint64,
-			timestamp uint64,
-			label []byte,
-			payload []byte,
-		) error {
-			return nil
+		onEvent = func(checksum uint64, e eventlog.Event) error {
+			return ctx.Err()
 		}
 	}
 
 	if err := enginefile.CheckIntegrity(
-		ctx,
 		make([]byte, file.MinReadBufferLen),
-		fl,
+		&FileOffsetLenReader{fl},
 		onEvent,
 	); err != nil {
 		logErr.Fatalf("checking file integrity: %s", err)
 	}
+}
+
+type FileOffsetLenReader struct{ *os.File }
+
+func (r *FileOffsetLenReader) Len() (uint64, error) {
+	fi, err := r.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(fi.Size()), nil
 }

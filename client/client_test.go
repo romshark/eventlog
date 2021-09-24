@@ -12,33 +12,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fasthttp/websocket"
+	"github.com/golang/mock/gomock"
+	apifasthttp "github.com/romshark/eventlog/api/fasthttp"
 	"github.com/romshark/eventlog/client"
 	"github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/eventlog/inmem"
-	fhttpfront "github.com/romshark/eventlog/frontend/fasthttp"
 	"github.com/romshark/eventlog/internal/hex"
 
+	"github.com/fasthttp/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
 )
 
-func test(t *testing.T, f func(*testing.T, Setup)) {
-	meta := func() map[string]string {
-		return map[string]string{
-			"foo":  "bar",
-			"bazz": "42",
-		}
-	}
+//go:generate go run -mod=mod github.com/golang/mock/mockgen -source ../eventlog/eventlog.go -package client_test -destination ./client_gen_test.go EventLogger
 
+const FastHTTPMaxReadBatchSize = 2
+
+func test(t *testing.T, f func(*testing.T, Setup)) {
 	setupHTTP := func(t *testing.T) (s Setup) {
-		s.DB = eventlog.New(inmem.New(meta()))
-		t.Cleanup(func() {
-			if err := s.DB.Close(); err != nil {
-				panic(fmt.Errorf("closing eventlog: %s", err))
-			}
-		})
+		s.Name = "HTTP"
+		ctrl := gomock.NewController(t)
+		s.Logger = NewMockEventLogger(ctrl)
 
 		inMemListener := fasthttputil.NewInmemoryListener()
 		t.Cleanup(func() {
@@ -46,9 +40,10 @@ func test(t *testing.T, f func(*testing.T, Setup)) {
 		})
 
 		server := &fasthttp.Server{
-			Handler: fhttpfront.New(
+			Handler: apifasthttp.New(
 				log.New(os.Stderr, "ERR", log.LstdFlags),
-				s.DB,
+				eventlog.New(s.Logger),
+				FastHTTPMaxReadBatchSize,
 			).Serve,
 		}
 
@@ -80,14 +75,10 @@ func test(t *testing.T, f func(*testing.T, Setup)) {
 	}
 
 	setupInmem := func(t *testing.T) (s Setup) {
-		s.DB = eventlog.New(inmem.New(meta()))
-		t.Cleanup(func() {
-			if err := s.DB.Close(); err != nil {
-				panic(fmt.Errorf("closing eventlog: %s", err))
-			}
-		})
-
-		s.Client = client.New(client.NewInmem(s.DB))
+		s.Name = "Inmem"
+		ctrl := gomock.NewController(t)
+		s.Logger = NewMockEventLogger(ctrl)
+		s.Client = client.New(client.NewInmem(eventlog.New(s.Logger)))
 		return
 	}
 
@@ -99,80 +90,88 @@ func TestMetadata(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		actual := make(map[string]string, s.DB.MetadataLen())
-		s.DB.ScanMetadata(func(f, v string) bool {
-			actual[f] = v
-			return true
-		})
+		c1 := s.Logger.EXPECT().MetadataLen().Times(1).Return(2)
+		s.Logger.EXPECT().ScanMetadata(Callback(func(cb interface{}) {
+			f := cb.(func(field, value string) bool)
+			require.True(t, f("foo", "bar"))
+			require.True(t, f("baz", "fuz"))
+		})).Times(1).After(c1)
 
 		fetched, err := s.Client.Metadata(context.Background())
 		r.NoError(err)
-		r.Len(fetched, len(actual))
-		for f, v := range actual {
-			r.Contains(fetched, f)
-			r.Equal(v, fetched[f])
-		}
+		r.Len(fetched, 2)
+
+		r.Contains(fetched, "foo")
+		r.Equal("bar", fetched["foo"])
+
+		r.Contains(fetched, "baz")
+		r.Equal("fuz", fetched["baz"])
+
 	})
 }
 
 func TestAppend(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
-		first := s.DB.FirstOffset()
 
-		// Append 1
-		offset1, newVersion1, tm, err := s.Client.Append(
+		expTime := time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
+		expPrevVers := uint64(123)
+		expVers := uint64(456)
+
+		s.Logger.EXPECT().Append(eventlog.EventData{
+			Label:       []byte("foo"),
+			PayloadJSON: []byte(`{"bar":"baz"}`),
+		}).Times(1).Return(
+			expPrevVers,
+			expVers,
+			expTime,
+			error(nil),
+		)
+
+		pv, v, tm, err := s.Client.Append(
 			context.Background(),
-			makeEvent(t, "foo", Doc{"foo": "bar"}),
+			makeEvent(t, "foo", Doc{"bar": "baz"}),
 		)
 		r.NoError(err)
-		r.Equal(first, fromHex(t, offset1))
-		r.Greater(fromHex(t, newVersion1), first)
-		r.WithinDuration(time.Now(), tm, time.Second)
-
-		next, err := scanExpect(t, s.DB, first, 10,
-			ExpectedEvent{Label: "foo", Payload: Doc{"foo": "bar"}},
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion1), next)
-
-		// Append multiple
-		offset2, newVersion2, tm2, err := s.Client.Append(
-			context.Background(),
-			makeEvent(t, "baz", Doc{"baz": "faz"}),
-			makeEvent(t, "maz", Doc{"maz": "taz"}),
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
-		r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
-		r.WithinDuration(time.Now(), tm2, time.Second)
-
-		next, err = scanExpect(t, s.DB, first, 10,
-			ExpectedEvent{Label: "foo", Payload: Doc{"foo": "bar"}},
-			ExpectedEvent{Label: "baz", Payload: Doc{"baz": "faz"}},
-			ExpectedEvent{Label: "maz", Payload: Doc{"maz": "taz"}},
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion2), next)
+		r.Equal(expPrevVers, fromHex(t, pv))
+		r.Equal(expVers, fromHex(t, v))
+		r.Equal(expTime, tm)
 	})
 }
 
-func TestAppendErrNoEvents(t *testing.T) {
+func TestAppendMulti(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		iv, err := s.Client.Version(context.Background())
-		r.NoError(err)
+		expTime := time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
+		expPrevVers := uint64(123)
+		expFirstVers := uint64(456)
+		expVers := uint64(789)
 
-		of, vr, tm, err := s.Client.Append(context.Background())
-		r.NoError(err)
-		r.Zero(of)
-		r.Zero(vr)
-		r.Zero(tm)
+		s.Logger.EXPECT().AppendMulti(eventlog.EventData{
+			Label:       []byte("first"),
+			PayloadJSON: []byte(`{"foo":"bar"}`),
+		}, eventlog.EventData{
+			Label:       []byte("second"),
+			PayloadJSON: []byte(`{"bar":"baz"}`),
+		}).Times(1).Return(
+			expPrevVers,
+			expFirstVers,
+			expVers,
+			expTime,
+			error(nil),
+		)
 
-		av, err := s.Client.Version(context.Background())
+		pv, fv, v, tm, err := s.Client.AppendMulti(
+			context.Background(),
+			makeEvent(t, "first", Doc{"foo": "bar"}),
+			makeEvent(t, "second", Doc{"bar": "baz"}),
+		)
 		r.NoError(err)
-		r.Equal(iv, av)
+		r.Equal(expPrevVers, fromHex(t, pv))
+		r.Equal(expFirstVers, fromHex(t, fv))
+		r.Equal(expVers, fromHex(t, v))
+		r.Equal(expTime, tm)
 	})
 }
 
@@ -180,265 +179,352 @@ func TestAppendCheck(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		first := s.DB.FirstOffset()
+		assumed := fmt.Sprintf("%x", uint64(123))
+		expTime := time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
+		expVers := uint64(456)
 
-		// Try mismatching version
-		offset1, newVersion1, tm, err := s.Client.AppendCheck(
-			context.Background(),
-			"1",
-			makeEvent(t, "foo", Doc{"foo": "bar"}),
-			makeEvent(t, "baz", Doc{"baz": "faz"}),
+		s.Logger.EXPECT().AppendCheck(
+			fromHex(t, assumed),
+			eventlog.EventData{
+				Label:       []byte("foo"),
+				PayloadJSON: []byte(`{"bar":"baz"}`),
+			},
+		).Times(1).Return(
+			expVers,
+			expTime,
+			error(nil),
 		)
+
+		v, tm, err := s.Client.AppendCheck(
+			context.Background(),
+			assumed,
+			makeEvent(t, "foo", Doc{"bar": "baz"}),
+		)
+		r.NoError(err)
+		r.Equal(expVers, fromHex(t, v))
+		r.Equal(expTime, tm)
+	})
+}
+
+func TestAppendCheckMulti(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		r := require.New(t)
+
+		assumed := fmt.Sprintf("%x", uint64(123))
+		expTime := time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC)
+		expFirstVers := uint64(456)
+		expVers := uint64(789)
+
+		s.Logger.EXPECT().AppendCheckMulti(
+			fromHex(t, assumed),
+			eventlog.EventData{
+				Label:       []byte("first"),
+				PayloadJSON: []byte(`{"foo":"bar"}`),
+			}, eventlog.EventData{
+				Label:       []byte("second"),
+				PayloadJSON: []byte(`{"bar":"baz"}`),
+			},
+		).Times(1).Return(
+			expFirstVers,
+			expVers,
+			expTime,
+			error(nil),
+		)
+
+		fv, v, tm, err := s.Client.AppendCheckMulti(
+			context.Background(),
+			assumed,
+			makeEvent(t, "first", Doc{"foo": "bar"}),
+			makeEvent(t, "second", Doc{"bar": "baz"}),
+		)
+		r.NoError(err)
+		r.Equal(expFirstVers, fromHex(t, fv))
+		r.Equal(expVers, fromHex(t, v))
+		r.Equal(expTime, tm)
+	})
+}
+
+func TestErrAppendMultiNoEvents(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		r := require.New(t)
+
+		pv, fv, v, tm, err := s.Client.AppendMulti(context.Background())
 		r.Error(err)
-		r.True(
-			errors.Is(err, client.ErrMismatchingVersions),
-			"unexpected error: (%T) %s", err, err.Error(),
-		)
-		r.Zero(offset1)
-		r.Zero(newVersion1)
+		RequireErr(t, err, client.ErrNoEvents)
+		r.Zero(pv)
+		r.Zero(fv)
+		r.Zero(v)
 		r.Zero(tm)
 
-		// Try matching version
-		offset1, newVersion1, tm, err = s.Client.AppendCheck(
-			context.Background(),
-			"0",
-			makeEvent(t, "foo", Doc{"foo": "bar"}),
-			makeEvent(t, "baz", Doc{"baz": "faz"}),
-		)
-		r.NoError(err)
-		r.Equal(first, fromHex(t, offset1))
-		r.Greater(fromHex(t, newVersion1), fromHex(t, offset1))
-		r.WithinDuration(time.Now(), tm, time.Second)
-
-		next, err := scanExpect(
-			t, s.DB, first, 10,
-			ExpectedEvent{Label: "foo", Payload: Doc{"foo": "bar"}},
-			ExpectedEvent{Label: "baz", Payload: Doc{"baz": "faz"}},
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion1), next)
-
-		offset2, newVersion2, tm2, err := s.Client.AppendCheck(
-			context.Background(),
-			newVersion1,
-			makeEvent(t, "taz", Doc{"taz": "maz"}),
-			makeEvent(t, "kaz", Doc{"kaz": "jaz"}),
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion1), fromHex(t, offset2))
-		r.Greater(fromHex(t, newVersion2), fromHex(t, offset2))
-		r.WithinDuration(time.Now(), tm2, time.Second)
-
-		next, err = scanExpect(t, s.DB, first, 10,
-			ExpectedEvent{Label: "foo", Payload: Doc{"foo": "bar"}},
-			ExpectedEvent{Label: "baz", Payload: Doc{"baz": "faz"}},
-			ExpectedEvent{Label: "taz", Payload: Doc{"taz": "maz"}},
-			ExpectedEvent{Label: "kaz", Payload: Doc{"kaz": "jaz"}},
-		)
-		r.NoError(err)
-		r.Equal(fromHex(t, newVersion2), next)
+		fv, v, tm, err = s.Client.AppendCheckMulti(context.Background(), "1")
+		r.Error(err)
+		RequireErr(t, err, client.ErrNoEvents)
+		r.Zero(pv)
+		r.Zero(fv)
+		r.Zero(v)
+		r.Zero(tm)
 	})
 }
 
-func TestAppendCheckNoEvents(t *testing.T) {
+func TestErrAppendCheckNoAssumedVersion(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		iv, err := s.Client.Version(context.Background())
-		r.NoError(err)
-
-		of, vr, tm, err := s.Client.AppendCheck(context.Background(), iv)
-		r.NoError(err)
-		r.Zero(of)
-		r.Zero(vr)
-		r.Zero(tm)
-
-		av, err := s.Client.Version(context.Background())
-		r.NoError(err)
-		r.Equal(iv, av)
-	})
-}
-
-func TestAppendCheckErrNoAssumedVersion(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		r := require.New(t)
-
-		iv, err := s.Client.Version(context.Background())
-		r.NoError(err)
-
-		of, vr, tm, err := s.Client.AppendCheck(
+		v, tm, err := s.Client.AppendCheck(
 			context.Background(),
 			"",
 			makeEvent(t, "foo", Doc{"foo": "bar"}),
 		)
 		r.Error(err)
-		r.True(
-			errors.Is(err, client.ErrInvalidVersion),
-			"unexpected error: (%T) %s", err, err.Error(),
-		)
-		r.Zero(of)
-		r.Zero(vr)
+		RequireErr(t, err, client.ErrInvalidVersion)
+		r.Zero(v)
 		r.Zero(tm)
 
-		av, err := s.Client.Version(context.Background())
-		r.NoError(err)
-		r.Equal(iv, av)
-	})
-}
-
-func TestRead(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		r := require.New(t)
-
-		offsets := make([]uint64, 3)
-		times := make([]time.Time, len(offsets))
-
-		for i := range offsets {
-			var err error
-			offsets[i], _, times[i], err = s.DB.Append(
-				makeEvent(t, "", Doc{"index": i}),
-			)
-			r.NoError(err)
-		}
-
-		// Read all
-		e, err := scanClient(
-			t,
+		fv, v, tm, err := s.Client.AppendCheckMulti(
 			context.Background(),
-			s.Client,
-			"0",
-			uint(len(offsets)),
+			"",
+			makeEvent(t, "foo", Doc{"foo": "bar"}),
 		)
-		r.NoError(err)
-		r.Len(e, len(offsets))
-		for i, e := range e {
-			r.Equal(offsets[i], fromHex(t, e.Offset))
-			r.Equal(times[i].Unix(), e.Time.Unix())
-			r.Equal("", string(e.Label))
-			r.Equal(Doc{"index": float64(i)}, e.Payload)
-		}
-
-		// Read first
-		ev, err := s.Client.Read(context.Background(), "0")
-		expectedEvent := makeEvent(t, "", Doc{"index": float64(0)})
-		r.NoError(err)
-		r.Equal(offsets[0], fromHex(t, ev.Offset))
-		r.Equal(times[0].Unix(), ev.Time.Unix())
-		r.Equal(expectedEvent.Label, string(ev.Label))
-		r.Equal(expectedEvent.PayloadJSON, ev.Payload)
-
-		// Read last 2
-		e, err = scanClient(
-			t,
-			context.Background(),
-			s.Client,
-			fmt.Sprintf("%x", offsets[1]),
-			2,
-		)
-		r.NoError(err)
-		r.Len(e, 2)
-
-		r.Equal(offsets[1], fromHex(t, e[0].Offset))
-		r.Equal(times[1].Unix(), e[0].Time.Unix())
-		r.Equal("", string(e[0].Label))
-		r.Equal(Doc{"index": float64(1)}, e[0].Payload)
-
-		r.Equal(offsets[2], fromHex(t, e[1].Offset))
-		r.Equal(times[2].Unix(), e[1].Time.Unix())
-		r.Equal("", string(e[1].Label))
-		r.Equal(Doc{"index": float64(2)}, e[1].Payload)
-
-		// Read at latest version
-		v, err := s.Client.Version(context.Background())
-		r.NoError(err)
-		e, err = scanClient(t, context.Background(), s.Client, v, uint(10))
 		r.Error(err)
-		r.True(
-			errors.Is(err, client.ErrOffsetOutOfBound),
-			"unexpected error: (%T) %s", err, err.Error(),
-		)
-		r.Len(e, 0)
+		RequireErr(t, err, client.ErrInvalidVersion)
+		r.Zero(v)
+		r.Zero(fv)
+		r.Zero(tm)
 	})
 }
 
-func TestAppendInvalid(t *testing.T) {
+func TestScan(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
-		for _, t1 := range []struct {
-			name  string
-			input string
-		}{
-			{"empty", ``},
-			{"syntax error", `{foo:"bar"}`},
-			{"empty object", `{}`},
-			{"array of values", `["bar", "foo", 42]`},
-		} {
-			t.Run(t1.name, func(t *testing.T) {
-				r := require.New(t)
+		expEvents := []client.Event{{
+			Time:            time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			VersionPrevious: "0",
+			Version:         "1",
+			VersionNext:     "2",
+			EventData: eventlog.EventData{
+				Label:       []byte("first"),
+				PayloadJSON: []byte(`{"i":1}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 2, 1, 0, time.UTC),
+			VersionPrevious: "1",
+			Version:         "2",
+			VersionNext:     "3",
+			EventData: eventlog.EventData{
+				Label:       []byte("second"),
+				PayloadJSON: []byte(`{"i":2}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 3, 1, 0, time.UTC),
+			VersionPrevious: "2",
+			Version:         "3",
+			VersionNext:     "4",
+			EventData: eventlog.EventData{
+				Label:       []byte("third"),
+				PayloadJSON: []byte(`{"i":3}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 4, 1, 0, time.UTC),
+			VersionPrevious: "3",
+			Version:         "4",
+			VersionNext:     "5",
+			EventData: eventlog.EventData{
+				Label:       []byte("fourth"),
+				PayloadJSON: []byte(`{"i":4}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 5, 1, 0, time.UTC),
+			VersionPrevious: "4",
+			Version:         "5",
+			VersionNext:     "0",
+			EventData: eventlog.EventData{
+				Label:       []byte("fifth"),
+				PayloadJSON: []byte(`{"i":5}`),
+			},
+		}}
 
-				_, _, _, err := s.Client.Append(
-					context.Background(),
-					eventlog.Event{PayloadJSON: []byte(t1.input)},
-				)
-				r.Error(err)
-				r.True(
-					errors.Is(err, client.ErrInvalidPayload),
-					"unexpected error: (%T) %s", err, err.Error(),
-				)
+		switch s.Name {
+		case "HTTP":
+			// For the HTTP setup 3 separate calls are expected
+			// since the length of a batch is limited to
+			// FastHTTPMaxReadBatchSize
+			c1 := s.Logger.EXPECT().Scan(
+				uint64(1),
+				false,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.NoError(t, f(Translate(t, expEvents[0])))
+					require.Equal(
+						t, "as", f(Translate(t, expEvents[1])).Error(),
+					)
+				}),
+			).Times(1).Return(nil)
 
-				v, err := s.Client.Version(context.Background())
-				r.NoError(err)
-				r.Zero(fromHex(t, v))
-			})
+			c2 := s.Logger.EXPECT().Scan(
+				uint64(3),
+				false,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.NoError(t, f(Translate(t, expEvents[2])))
+					require.Equal(
+						t, "as", f(Translate(t, expEvents[3])).Error(),
+					)
+				}),
+			).Times(1).Return(nil).After(c1)
+
+			s.Logger.EXPECT().Scan(
+				uint64(5),
+				false,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.Equal(
+						t, "as", f(Translate(t, expEvents[4])).Error(),
+					)
+				}),
+			).Times(1).Return(nil).After(c2)
+
+		case "Inmem":
+			s.Logger.EXPECT().Scan(
+				uint64(1),
+				false,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.NoError(t, f(Translate(t, expEvents[0])))
+					require.NoError(t, f(Translate(t, expEvents[1])))
+					require.NoError(t, f(Translate(t, expEvents[2])))
+					require.NoError(t, f(Translate(t, expEvents[3])))
+					require.NoError(t, f(Translate(t, expEvents[4])))
+				}),
+			).Times(1).Return(nil)
+
+		default:
+			t.Fatalf("unsupported setup: %q", s.Name)
 		}
+
+		i := 0
+		require.NoError(t, s.Client.Scan(
+			context.Background(),
+			"1",
+			false,
+			func(e client.Event) error {
+				require.Equal(t, expEvents[i], e, "mismatch at %d", i)
+				i++
+				return nil
+			},
+		))
+		require.Equal(t, len(expEvents), i)
+	})
+}
+
+func TestScanReverse(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		expEvents := []client.Event{{
+			Time:            time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			VersionPrevious: "0",
+			Version:         "1",
+			VersionNext:     "2",
+			EventData: eventlog.EventData{
+				Label:       []byte("first"),
+				PayloadJSON: []byte(`{"i":1}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 2, 1, 0, time.UTC),
+			VersionPrevious: "1",
+			Version:         "2",
+			VersionNext:     "3",
+			EventData: eventlog.EventData{
+				Label:       []byte("second"),
+				PayloadJSON: []byte(`{"i":2}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 3, 1, 0, time.UTC),
+			VersionPrevious: "2",
+			Version:         "3",
+			VersionNext:     "0",
+			EventData: eventlog.EventData{
+				Label:       []byte("third"),
+				PayloadJSON: []byte(`{"i":3}`),
+			},
+		}}
+
+		switch s.Name {
+		case "HTTP":
+			// For the HTTP setup 2 separate calls are expected
+			// since the length of a batch is limited to
+			// FastHTTPMaxReadBatchSize
+
+			c1 := s.Logger.EXPECT().Scan(
+				uint64(3),
+				true,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.NoError(t, f(Translate(t, expEvents[2])))
+					require.Equal(
+						t, "as", f(Translate(t, expEvents[1])).Error(),
+					)
+				}),
+			).Times(1).Return(nil)
+
+			s.Logger.EXPECT().Scan(
+				uint64(1),
+				true,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.Equal(
+						t, "as", f(Translate(t, expEvents[0])).Error(),
+					)
+				}),
+			).Times(1).Return(nil).After(c1)
+
+		case "Inmem":
+			s.Logger.EXPECT().Scan(
+				uint64(3),
+				true,
+				Callback(func(x interface{}) {
+					f := x.(eventlog.ScanFn)
+					require.NoError(t, f(Translate(t, expEvents[2])))
+					require.NoError(t, f(Translate(t, expEvents[1])))
+					require.NoError(t, f(Translate(t, expEvents[0])))
+				}),
+			).Times(1).Return(nil)
+
+		default:
+			t.Fatalf("unsupported setup: %q", s.Name)
+		}
+
+		i := len(expEvents) - 1
+		counter := 0
+		require.NoError(t, s.Client.Scan(
+			context.Background(),
+			"3",
+			true, // Reverse
+			func(e client.Event) error {
+				require.Equal(t, expEvents[i], e, "mismatch at %d", i)
+				i--
+				counter++
+				return nil
+			},
+		))
+		require.Equal(t, len(expEvents), counter)
 	})
 }
 
 func TestVersion(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
-		r := require.New(t)
+		s.Logger.EXPECT().Version().Times(1).Return(uint64(42))
 
-		nextExpected := "0"
-		for i := 0; i < 3; i++ {
-			v1, err := s.Client.Version(context.Background())
-			r.NoError(err)
-			r.Equal(nextExpected, v1)
-
-			_, newVersion, _, err := s.Client.AppendCheck(
-				context.Background(),
-				v1,
-				makeEvent(t, "", Doc{"index": i}),
-			)
-			r.NoError(err)
-			nextExpected = newVersion
-
-			v2, err := s.Client.Version(context.Background())
-			r.NoError(err)
-			r.Equal(newVersion, v2)
-
-			r.NoError(err)
-		}
+		v, err := s.Client.Version(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "2a", v)
 	})
 }
 
-func TestBegin(t *testing.T) {
+func TestVersionInitial(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
-		r := require.New(t)
+		s.Logger.EXPECT().VersionInitial().Times(1).Return(uint64(42))
 
-		vBegin, err := s.Client.Begin(context.Background())
-		r.NoError(err)
-
-		r.Equal("0", vBegin)
-
-		_, _, _, err = s.Client.AppendCheck(
-			context.Background(),
-			vBegin,
-			makeEvent(t, "", Doc{"foo": "bar"}),
-		)
-		r.NoError(err)
-
-		vBegin2, err := s.Client.Begin(context.Background())
-		r.NoError(err)
-		r.Equal(vBegin, vBegin2)
+		v, err := s.Client.VersionInitial(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "2a", v)
 	})
 }
 
@@ -446,33 +532,43 @@ func TestListen(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		versionChan1 := make(chan string, 1)
+		versionChan1 := make(chan client.Version, 1)
 		go func() {
 			if err := s.Client.Listen(context.Background(), func(v []byte) {
-				versionChan1 <- string(v)
+				versionChan1 <- client.Version(v)
 			}); err != nil {
 				panic(err)
 			}
 		}()
 
-		versionChan2 := make(chan string, 1)
+		versionChan2 := make(chan client.Version, 1)
 		go func() {
 			if err := s.Client.Listen(context.Background(), func(v []byte) {
-				versionChan2 <- string(v)
+				versionChan2 <- client.Version(v)
 			}); err != nil {
 				panic(err)
 			}
 		}()
+
+		s.Logger.EXPECT().Append(eventlog.EventData{
+			Label:       []byte(""),
+			PayloadJSON: []byte(`{"foo":"bar"}`),
+		}).Times(1).Return(
+			uint64(0),
+			uint64(1),
+			time.Date(2021, 1, 1, 1, 1, 1, 1, time.UTC),
+			error(nil),
+		)
 
 		time.Sleep(100 * time.Millisecond)
-		_, newVersion, _, err := s.Client.Append(
+		_, v, _, err := s.Client.Append(
 			context.Background(),
 			makeEvent(t, "", Doc{"foo": "bar"}),
 		)
 		r.NoError(err)
 
-		r.Equal(newVersion, <-versionChan1)
-		r.Equal(newVersion, <-versionChan2)
+		r.Equal(v, <-versionChan1)
+		r.Equal(v, <-versionChan2)
 	})
 }
 
@@ -480,19 +576,19 @@ func TestListenCancel(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		errChan := make(chan error, 1)
+		chanErr := make(chan error, 1)
 		versionTriggered := uint32(0)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
 		go func() {
-			errChan <- s.Client.Listen(ctx, func(v []byte) {
+			chanErr <- s.Client.Listen(ctx, func(v []byte) {
 				atomic.AddUint32(&versionTriggered, 1)
 			})
 		}()
 
 		cancel()
-		r.Equal(context.Canceled, <-errChan)
+		r.Equal(context.Canceled, <-chanErr)
 		r.Zero(atomic.LoadUint32(&versionTriggered))
 	})
 }
@@ -501,62 +597,121 @@ func TestTryAppend(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		assumed, err := s.Client.Begin(context.Background())
-		r.NoError(err)
+		c1 := s.Logger.EXPECT().AppendCheck(
+			uint64(1),
+			eventlog.EventData{
+				Label:       []byte("x"),
+				PayloadJSON: []byte(`{"x":"y"}`),
+			},
+		).Times(1).Return(
+			uint64(0),
+			time.Time{},
+			eventlog.ErrMismatchingVersions,
+		)
 
-		// Append
-		_, v1, _, err := s.Client.Append(
+		s.Logger.EXPECT().AppendCheck(
+			uint64(2),
+			eventlog.EventData{
+				Label:       []byte("x"),
+				PayloadJSON: []byte(`{"x":"y"}`),
+			},
+		).Times(1).Return(
+			uint64(3),
+			time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			error(nil),
+		).After(c1)
+
+		syncCalled := 0
+		transactionCalled := 0
+
+		pv, v, tm, err := s.Client.TryAppend(
 			context.Background(),
-			makeEvent(t, "first", Doc{"first": "1"}),
+			"1",
+			func() (eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return makeEvent(t, "x", Doc{"x": "y"}), nil
+			},
+			func() (client.Version, error) {
+				// Sync
+				syncCalled++
+				return "2", nil
+			},
 		)
 		r.NoError(err)
+		r.Equal("2", pv)
+		r.Equal("3", v)
+		r.Equal(time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC), tm)
 
-		_, v2, _, err := s.Client.Append(
-			context.Background(),
-			makeEvent(t, "second", Doc{"second": "2"}),
+		r.Equal(1, syncCalled)
+		r.Equal(2, transactionCalled)
+	})
+}
+
+func TestTryAppendMulti(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		r := require.New(t)
+
+		c1 := s.Logger.EXPECT().AppendCheckMulti(
+			uint64(1),
+			[]eventlog.EventData{{
+				Label:       []byte("a"),
+				PayloadJSON: []byte(`{"a":"b"}`),
+			}, {
+				Label:       []byte("b"),
+				PayloadJSON: []byte(`{"b":"c"}`),
+			}},
+		).Times(1).Return(
+			uint64(0), // First version
+			uint64(0), // Version
+			time.Time{},
+			eventlog.ErrMismatchingVersions,
 		)
-		r.NoError(err)
 
-		_, v3, _, err := s.Client.Append(
+		s.Logger.EXPECT().AppendCheckMulti(
+			uint64(2),
+			[]eventlog.EventData{{
+				Label:       []byte("a"),
+				PayloadJSON: []byte(`{"a":"b"}`),
+			}, {
+				Label:       []byte("b"),
+				PayloadJSON: []byte(`{"b":"c"}`),
+			}},
+		).Times(1).Return(
+			uint64(3), // First version
+			uint64(4), // Version
+			time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			error(nil),
+		).After(c1)
+
+		syncCalled := 0
+		transactionCalled := 0
+
+		pv, fv, v, tm, err := s.Client.TryAppendMulti(
 			context.Background(),
-			makeEvent(t, "third", Doc{"third": "3"}),
-		)
-		r.NoError(err)
-
-		syncCalled := uint32(0)
-		transactionCalled := uint32(0)
-
-		offset, newVersion, tm, err := s.Client.TryAppend(
-			context.Background(),
-			assumed,
-			// Transaction
-			func() (events []eventlog.Event, err error) {
-				atomic.AddUint32(&transactionCalled, 1)
-				return []eventlog.Event{
-					makeEvent(t, "fourth", Doc{"fourth": "4"}),
-					makeEvent(t, "fifth", Doc{"fifth": "5"}),
+			"1",
+			func() ([]eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return []eventlog.EventData{
+					makeEvent(t, "a", Doc{"a": "b"}),
+					makeEvent(t, "b", Doc{"b": "c"}),
 				}, nil
 			},
-			// Sync
-			func() (string, error) {
-				switch atomic.AddUint32(&syncCalled, 1) {
-				case 1:
-					return v1, nil
-				case 2:
-					return v2, nil
-				case 3:
-					return v3, nil
-				}
-				return "", nil
+			func() (client.Version, error) {
+				// Sync
+				syncCalled++
+				return "2", nil
 			},
 		)
 		r.NoError(err)
-		r.Equal(v3, offset)
-		r.Greater(fromHex(t, newVersion), fromHex(t, v3))
-		r.WithinDuration(time.Now(), tm, time.Second)
+		r.Equal("2", pv)
+		r.Equal("3", fv)
+		r.Equal("4", v)
+		r.Equal(time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC), tm)
 
-		r.Equal(uint32(3), atomic.LoadUint32(&syncCalled))
-		r.Equal(uint32(4), atomic.LoadUint32(&transactionCalled))
+		r.Equal(1, syncCalled)
+		r.Equal(2, transactionCalled)
 	})
 }
 
@@ -564,36 +719,55 @@ func TestTryAppendTransactionErr(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		assumed, err := s.Client.Begin(context.Background())
-		r.NoError(err)
+		errTransaction := errors.New("transaction error")
+		transactionCalled := 0
 
-		syncCalled := uint32(0)
-		transactionCalled := uint32(0)
-
-		errTransactionFail := fmt.Errorf("transaction failure")
-
-		offset, newVersion, tm, err := s.Client.TryAppend(
+		pv, v, tm, err := s.Client.TryAppend(
 			context.Background(),
-			assumed,
-			// Transaction
-			func() (events []eventlog.Event, err error) {
-				atomic.AddUint32(&transactionCalled, 1)
-				return nil, errTransactionFail
+			"1",
+			func() (eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return eventlog.EventData{}, errTransaction
 			},
-			// Sync
-			func() (string, error) {
-				atomic.AddUint32(&syncCalled, 1)
-				return "1", nil
+			func() (client.Version, error) {
+				// Sync
+				t.Fatal("this callback must not be invoked")
+				return "", nil
 			},
 		)
+
 		r.Error(err)
-		r.Equal(errTransactionFail, err)
-		r.Zero(offset)
-		r.Zero(newVersion)
+		r.Equal(errTransaction, err)
+		r.Equal(1, transactionCalled)
+		r.Zero(pv)
+		r.Zero(v)
 		r.Zero(tm)
 
-		r.Equal(uint32(0), atomic.LoadUint32(&syncCalled))
-		r.Equal(uint32(1), atomic.LoadUint32(&transactionCalled))
+		transactionCalled = 0
+
+		pv, fv, v, tm, err := s.Client.TryAppendMulti(
+			context.Background(),
+			"1",
+			func() ([]eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return []eventlog.EventData{}, errTransaction
+			},
+			func() (client.Version, error) {
+				// Sync
+				t.Fatal("this callback must not be invoked")
+				return "", nil
+			},
+		)
+
+		r.Error(err)
+		r.Equal(errTransaction, err)
+		r.Equal(1, transactionCalled)
+		r.Zero(pv)
+		r.Zero(fv)
+		r.Zero(v)
+		r.Zero(tm)
 	})
 }
 
@@ -601,117 +775,90 @@ func TestTryAppendSyncErr(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		r := require.New(t)
 
-		assumed, err := s.Client.Begin(context.Background())
-		r.NoError(err)
-
-		_, _, _, err = s.DB.Append(makeEvent(t, "first", Doc{"first": 1}))
-		r.NoError(err)
-
-		syncCalled := uint32(0)
-		transactionCalled := uint32(0)
-
-		errSyncFail := fmt.Errorf("transaction failure")
-
-		offset, newVersion, tm, err := s.Client.TryAppend(
-			context.Background(),
-			assumed,
-			// Transaction
-			func() (events []eventlog.Event, err error) {
-				atomic.AddUint32(&transactionCalled, 1)
-				return []eventlog.Event{makeEvent(t, "", Doc{"foo": 42})}, nil
+		c1 := s.Logger.EXPECT().AppendCheck(
+			uint64(1),
+			eventlog.EventData{
+				Label:       []byte("x"),
+				PayloadJSON: []byte(`{"x":"y"}`),
 			},
-			// Sync
-			func() (string, error) {
-				atomic.AddUint32(&syncCalled, 1)
-				return "", errSyncFail
+		).Times(1).Return(
+			uint64(0),
+			time.Time{},
+			eventlog.ErrMismatchingVersions,
+		)
+
+		s.Logger.EXPECT().AppendCheckMulti(
+			uint64(1),
+			[]eventlog.EventData{{
+				Label:       []byte("a"),
+				PayloadJSON: []byte(`{"a":"b"}`),
+			}, {
+				Label:       []byte("b"),
+				PayloadJSON: []byte(`{"b":"c"}`),
+			}},
+		).Times(1).Return(
+			uint64(0), // First version
+			uint64(0), // Version
+			time.Time{},
+			eventlog.ErrMismatchingVersions,
+		).After(c1)
+
+		errSync := errors.New("sync error")
+
+		syncCalled := 0
+		transactionCalled := 0
+
+		pv, v, tm, err := s.Client.TryAppend(
+			context.Background(),
+			"1",
+			func() (eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return makeEvent(t, "x", Doc{"x": "y"}), nil
+			},
+			func() (client.Version, error) {
+				// Sync
+				syncCalled++
+				return "", errSync
 			},
 		)
 		r.Error(err)
-		r.Equal(errSyncFail, err)
-		r.Zero(offset)
-		r.Zero(newVersion)
+		r.Equal(errSync, err)
+		r.Zero(pv)
+		r.Zero(v)
 		r.Zero(tm)
+		r.Equal(1, syncCalled)
+		r.Equal(1, transactionCalled)
 
-		r.Equal(uint32(1), atomic.LoadUint32(&syncCalled))
-		r.Equal(uint32(1), atomic.LoadUint32(&transactionCalled))
+		syncCalled = 0
+		transactionCalled = 0
+
+		pv, fv, v, tm, err := s.Client.TryAppendMulti(
+			context.Background(),
+			"1",
+			func() ([]eventlog.EventData, error) {
+				// Transaction
+				transactionCalled++
+				return []eventlog.EventData{
+					makeEvent(t, "a", Doc{"a": "b"}),
+					makeEvent(t, "b", Doc{"b": "c"}),
+				}, nil
+			},
+			func() (client.Version, error) {
+				// Sync
+				syncCalled++
+				return "", errSync
+			},
+		)
+		r.Error(err)
+		r.Equal(errSync, err)
+		r.Zero(pv)
+		r.Zero(fv)
+		r.Zero(v)
+		r.Zero(tm)
+		r.Equal(1, syncCalled)
+		r.Equal(1, transactionCalled)
 	})
-}
-
-type ExpectedEvent struct {
-	Label   string
-	Payload Doc
-}
-
-func scanExpect(
-	t *testing.T,
-	l *eventlog.EventLog,
-	offset,
-	limit uint64,
-	expected ...ExpectedEvent,
-) (uint64, error) {
-	actual := make([]ExpectedEvent, 0, len(expected))
-	nextOffset, err := l.Scan(offset, limit, func(
-		offset uint64,
-		timestamp uint64,
-		label []byte,
-		payload []byte,
-	) error {
-		var data Doc
-		if err := json.Unmarshal(payload, &data); err != nil {
-			return fmt.Errorf("unexpected error: %w", err)
-		}
-		actual = append(actual, ExpectedEvent{
-			Label:   string(label),
-			Payload: data,
-		})
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	require.Equal(t, expected, actual)
-	return nextOffset, nil
-}
-
-func scanClient(
-	t *testing.T,
-	ctx context.Context,
-	c *client.Client,
-	offset string,
-	limit uint,
-) ([]Event, error) {
-	events := make([]Event, 0, limit)
-	err := c.Scan(
-		ctx,
-		offset,
-		limit,
-		func(
-			offset string,
-			timestamp time.Time,
-			label []byte,
-			payload []byte,
-			next string,
-		) error {
-			ev := Event{Event: client.Event{
-				Offset:  offset,
-				Time:    timestamp,
-				Payload: payload,
-				Next:    next,
-			}}
-			if len(label) > 0 {
-				ev.Label = make([]byte, len(label))
-				copy(ev.Label, label)
-			}
-
-			if err := json.Unmarshal(payload, &ev.Payload); err != nil {
-				return fmt.Errorf("unexpected error: %w", err)
-			}
-			events = append(events, ev)
-			return nil
-		},
-	)
-	return events, err
 }
 
 type Event struct {
@@ -725,11 +872,11 @@ func fromHex(t *testing.T, s string) uint64 {
 	return i
 }
 
-func makeEvent(t *testing.T, label string, d Doc) eventlog.Event {
+func makeEvent(t *testing.T, label string, d Doc) client.EventData {
 	b, err := json.Marshal(d)
 	require.NoError(t, err)
-	return eventlog.Event{
-		Label:       label,
+	return eventlog.EventData{
+		Label:       []byte(label),
 		PayloadJSON: b,
 	}
 }
@@ -737,6 +884,38 @@ func makeEvent(t *testing.T, label string, d Doc) eventlog.Event {
 type Doc map[string]interface{}
 
 type Setup struct {
-	DB     *eventlog.EventLog
+	Name   string
+	Logger *MockEventLogger
 	Client *client.Client
+}
+
+type Callback func(fn interface{})
+
+func (m Callback) Matches(fn interface{}) bool {
+	m(fn)
+	return true
+}
+func (Callback) String() string { return "is a callback lambda function" }
+
+func RequireErr(t *testing.T, expected, actual error) {
+	require.True(
+		t,
+		errors.Is(actual, expected),
+		"unexpected error: (%T) %s", actual, actual.Error(),
+	)
+}
+
+func Translate(t *testing.T, from client.Event) (to eventlog.Event) {
+	to.PayloadJSON = make([]byte, len(from.PayloadJSON))
+	copy(to.PayloadJSON, from.PayloadJSON)
+
+	to.Label = make([]byte, len(from.Label))
+	copy(to.Label, from.Label)
+
+	to.Timestamp = uint64(from.Time.Unix())
+	to.Version = fromHex(t, from.Version)
+	to.VersionPrevious = fromHex(t, from.VersionPrevious)
+	to.VersionNext = fromHex(t, from.VersionNext)
+
+	return
 }

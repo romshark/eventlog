@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 )
 
 type ModeCreate struct {
@@ -19,7 +20,10 @@ func parseModeCreate(args []string) (m ModeCreate, err error) {
 
 	flags := newFlagSet()
 	flags.Var(&metaFields, "meta", "Metadata fields")
-	flags.Parse(args[1:])
+	if err = flags.Parse(args[1:]); err != nil {
+		err = fmt.Errorf("parsing flags: %w", err)
+		return
+	}
 
 	m.MetaFields, err = parseMetaFields(metaFields)
 	if err != nil {

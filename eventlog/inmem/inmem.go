@@ -7,8 +7,8 @@ import (
 	"github.com/romshark/eventlog/eventlog"
 )
 
-// Make sure *Inmem implements eventlog.Implementer
-var _ eventlog.Implementer = new(Inmem)
+// Make sure *Inmem implements EventLogger
+var _ eventlog.EventLogger = new(Inmem)
 
 type inmemEvent struct {
 	Timestamp uint64
@@ -16,7 +16,7 @@ type inmemEvent struct {
 	Payload   []byte
 }
 
-func newInmemEvent(event eventlog.Event, tm time.Time) inmemEvent {
+func newInmemEvent(event eventlog.EventData, tm time.Time) inmemEvent {
 	p := make([]byte, len(event.PayloadJSON))
 	copy(p, event.PayloadJSON)
 
@@ -41,171 +41,228 @@ func New(metadata map[string]string) *Inmem {
 	}
 }
 
-func (l *Inmem) MetadataLen() int {
-	return len(l.metadata)
+func (m *Inmem) MetadataLen() int {
+	return len(m.metadata)
 }
 
-func (l *Inmem) ScanMetadata(fn func(field, value string) bool) {
-	for f, v := range l.metadata {
+func (m *Inmem) ScanMetadata(fn func(field, value string) bool) {
+	for f, v := range m.metadata {
 		if !fn(f, v) {
 			return
 		}
 	}
 }
 
-func (l *Inmem) Version() uint64 {
-	l.lock.RLock()
-	v := len(l.store)
-	l.lock.RUnlock()
-	return uint64(v)
+func (m *Inmem) Version() uint64 {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+	return uint64(len(m.store))
 }
 
-func (l *Inmem) FirstOffset() uint64 { return 0 }
+func (m *Inmem) VersionInitial() uint64 {
+	m.lock.RLock()
+	ln := len(m.store)
+	m.lock.RUnlock()
+	if ln < 1 {
+		return 0
+	}
+	return 1
+}
 
-// Scan reads a maximum of n events starting at the given offset.
-// If offset+n exceeds the length of the log then a smaller number
-// of events is returned. Of n is 0 then all events starting at the
-// given offset are returned
-func (l *Inmem) Scan(
-	offset uint64,
-	n uint64,
+// Scan reads events starting at the given version.
+// Events are read in reversed order if reverse == true.
+// fn is called for every scanned event.
+//
+// WARNING: Calling Append, AppendMulti, AppendCheck, AppendCheckMulti
+// and Close in fn will cause a deadlock!
+func (m *Inmem) Scan(
+	version uint64,
+	reverse bool,
 	fn eventlog.ScanFn,
-) (
-	nextOffset uint64,
-	err error,
-) {
-	l.lock.RLock()
-	defer l.lock.RUnlock()
+) error {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
 
-	ln := uint64(len(l.store))
+	ln := uint64(len(m.store))
 
-	if offset >= ln {
-		return 0, eventlog.ErrOffsetOutOfBound
+	if version > ln || version < 1 {
+		return eventlog.ErrInvalidVersion
 	}
 
-	var events []inmemEvent
-	if n > 0 {
-		if offset+n > ln {
-			events = l.store[offset:]
-		} else {
-			events = l.store[offset : offset+n]
+	versionPrevious := version - 1
+	nextVersion := version + 1
+
+	if reverse {
+		for ; version > 0; version-- {
+			e := m.store[version-1]
+
+			pv := versionPrevious
+			if version < 2 {
+				pv = 0
+			}
+			nv := nextVersion
+			if version >= ln {
+				nv = 0
+			}
+
+			if err := fn(eventlog.Event{
+				Version:         version,
+				VersionPrevious: pv,
+				VersionNext:     nv,
+				Timestamp:       e.Timestamp,
+				EventData: eventlog.EventData{
+					Label:       e.Label,
+					PayloadJSON: e.Payload,
+				},
+			}); err != nil {
+				return err
+			}
+			nextVersion--
+			versionPrevious--
 		}
 	} else {
-		events = l.store[offset:]
-	}
+		for ; version <= ln; version++ {
+			e := m.store[version-1]
 
-	for _, e := range events {
-		if err = fn(offset, e.Timestamp, e.Label, e.Payload); err != nil {
-			nextOffset = offset + 1
-			return
+			pv := versionPrevious
+			if version < 2 {
+				pv = 0
+			}
+			nv := nextVersion
+			if version >= ln {
+				nv = 0
+			}
+
+			if err := fn(eventlog.Event{
+				Version:         version,
+				VersionPrevious: pv,
+				VersionNext:     nv,
+				Timestamp:       e.Timestamp,
+				EventData: eventlog.EventData{
+					Label:       e.Label,
+					PayloadJSON: e.Payload,
+				},
+			}); err != nil {
+				return err
+			}
+			nextVersion++
+			versionPrevious++
 		}
-		offset++
 	}
-	nextOffset = offset
-
-	return
+	return nil
 }
 
-func (l *Inmem) Append(event eventlog.Event) (
-	offset uint64,
-	newVersion uint64,
+func (m *Inmem) Append(event eventlog.EventData) (
+	versionPrevious uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
-	tm = time.Now()
+	tm = time.Now().UTC()
 	ev := newInmemEvent(event, tm)
 
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
-	l.store = append(l.store, ev)
-	ln := uint64(len(l.store))
-
-	offset = ln - 1
-	newVersion = ln
+	versionPrevious = uint64(len(m.store))
+	m.store = append(m.store, ev)
+	version = uint64(len(m.store))
 	return
 }
 
-func (l *Inmem) AppendMulti(events ...eventlog.Event) (
-	offset uint64,
-	newVersion uint64,
+func (m *Inmem) AppendMulti(events ...eventlog.EventData) (
+	versionPrevious uint64,
+	versionFirst uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
 	ev := make([]inmemEvent, len(events))
-	tm = time.Now()
+	tm = time.Now().UTC()
 	for i, e := range events {
 		ev[i] = newInmemEvent(e, tm)
 	}
 
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
-	offset = uint64(len(l.store))
-	l.store = append(l.store, ev...)
-	newVersion = uint64(len(l.store))
+	if len(events) < 1 {
+		tm = time.Time{}
+		versionPrevious = uint64(len(m.store))
+		version = uint64(len(m.store))
+		return
+	}
+
+	versionPrevious = uint64(len(m.store))
+	versionFirst = uint64(len(m.store)) + 1
+	m.store = append(m.store, ev...)
+	version = uint64(len(m.store))
 	return
 }
 
-func (l *Inmem) AppendCheck(
+func (m *Inmem) AppendCheck(
 	assumedVersion uint64,
-	event eventlog.Event,
+	event eventlog.EventData,
 ) (
-	offset uint64,
-	newVersion uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
-	tm = time.Now()
+	tm = time.Now().UTC()
 	ev := newInmemEvent(event, tm)
 
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
-	if assumedVersion != uint64(len(l.store)) {
+	if assumedVersion != uint64(len(m.store)) {
 		tm = time.Time{}
 		err = eventlog.ErrMismatchingVersions
 		return
 	}
 
-	offset = uint64(len(l.store))
-	l.store = append(l.store, ev)
-	newVersion = uint64(len(l.store))
+	m.store = append(m.store, ev)
+	version = uint64(len(m.store))
 	return
 }
 
-func (l *Inmem) AppendCheckMulti(
+func (m *Inmem) AppendCheckMulti(
 	assumedVersion uint64,
-	events ...eventlog.Event,
+	events ...eventlog.EventData,
 ) (
-	offset uint64,
-	newVersion uint64,
+	versionFirst uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
 	ev := make([]inmemEvent, len(events))
-	tm = time.Now()
+	tm = time.Now().UTC()
 	for i, e := range events {
 		ev[i] = newInmemEvent(e, tm)
 	}
 
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
-	if assumedVersion != uint64(len(l.store)) {
+	if assumedVersion != uint64(len(m.store)) {
 		err = eventlog.ErrMismatchingVersions
 		return
 	}
 
-	offset = uint64(len(l.store))
-	l.store = append(l.store, ev...)
-	newVersion = uint64(len(l.store))
+	if len(events) < 1 {
+		tm = time.Time{}
+		version = uint64(len(m.store))
+		return
+	}
+
+	versionFirst = uint64(len(m.store)) + 1
+	m.store = append(m.store, ev...)
+	version = uint64(len(m.store))
 	return
 }
 
-func (l *Inmem) Close() error {
-	l.lock.Lock()
-	defer l.lock.Unlock()
-	l.store = []inmemEvent{}
+func (m *Inmem) Close() error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.store = []inmemEvent{}
 	return nil
 }

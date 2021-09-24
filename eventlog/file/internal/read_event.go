@@ -14,9 +14,12 @@ type ReaderConf struct {
 	MaxPayloadLen uint32
 }
 
-// ReadEvent reads an event entry from the given reader at the given offset.
+const SupportedProtoVersion = 5
+
+// ReadEvent reads an event entry from the given reader at the offset (version).
 // Checks the read entry's integrity by validating the read checksum.
 // Returns io.EOF when there's nothing more to read.
+// event.VersionNext will always remain zero as it's not part of an entry.
 //
 // WARNING: returned label and payload slices both reference the given buffer.
 // WARNING: buffer must be at least the size of the sum of the
@@ -29,14 +32,14 @@ func ReadEvent(
 	conf ReaderConf,
 ) (
 	checksum uint64,
-	timestamp uint64,
-	label []byte,
-	payload []byte,
+	event eventlog.Event,
 	bytesRead int64,
 	err error,
 ) {
 	buffer.MustValidate(conf)
 	hasher.Reset()
+
+	event.Version = uint64(offset)
 
 	buf8 := buffer[:8]
 	buf4 := buffer[:4]
@@ -66,7 +69,7 @@ func ReadEvent(
 			)
 			return true
 		} else if n != len(buffer) {
-			err = eventlog.ErrInvalidOffset
+			err = eventlog.ErrInvalidVersion
 			return true
 		}
 		if hash {
@@ -92,7 +95,7 @@ func ReadEvent(
 	if read(buf8, "timestamp", true) {
 		return
 	}
-	timestamp = binary.LittleEndian.Uint64(buf8)
+	event.Timestamp = binary.LittleEndian.Uint64(buf8)
 
 	// Read label length (2 bytes)
 	if read(buf2, "label length", true) {
@@ -109,28 +112,34 @@ func ReadEvent(
 	// Check payload length
 	if payloadLen < conf.MinPayloadLen ||
 		payloadLen > conf.MaxPayloadLen {
-		// Invalid payload length indicates wrong offset
-		err = eventlog.ErrInvalidOffset
+		// Invalid payload length indicates wrong version
+		err = eventlog.ErrInvalidVersion
 		return
 	}
 
 	if labelLen > 0 {
 		// Read label
-		label = buffer[:labelLen]
-		if read(label, "label", true) {
+		event.Label = buffer[8 : 8+labelLen]
+		if read(event.Label, "label", true) {
 			return
 		}
 	}
 
 	// Read payload
-	payload = buffer[labelLen : uint32(labelLen)+payloadLen]
-	if read(payload, "payload", true) {
+	event.PayloadJSON = buffer[8+labelLen : 8+uint32(labelLen)+payloadLen]
+	if read(event.PayloadJSON, "payload", true) {
 		return
 	}
 
+	// Read previous version (8 bytes)
+	if read(buf8, "previous version", true) {
+		return
+	}
+	event.VersionPrevious = binary.LittleEndian.Uint64(buf8)
+
 	// Verify integrity of the read entry
 	if actualChecksum := hasher.Sum64(); checksum != actualChecksum {
-		err = eventlog.ErrInvalidOffset
+		err = eventlog.ErrInvalidVersion
 		return
 	}
 
@@ -141,6 +150,7 @@ type ReadBuffer []byte
 
 func (b ReadBuffer) MustValidate(conf ReaderConf) {
 	requiredBufferLen := conf.MaxPayloadLen +
+		8 + // Previous version
 		uint32(256) // Max label length
 	if uint32(len(b)) < requiredBufferLen {
 		panic(fmt.Errorf(

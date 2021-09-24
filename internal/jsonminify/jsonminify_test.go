@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/romshark/eventlog/internal/jsonminify"
+
 	"github.com/stretchr/testify/require"
 	tdewolff "github.com/tdewolff/minify"
 	tdewolffjson "github.com/tdewolff/minify/json"

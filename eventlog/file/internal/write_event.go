@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"unsafe"
 
 	"github.com/romshark/eventlog/eventlog"
 )
@@ -25,7 +24,6 @@ func WriteEvent(
 	buffer []byte,
 	checksum uint64,
 	offset int64,
-	timestamp uint64,
 	event eventlog.Event,
 ) (written int, err error) {
 	if len(buffer) < 8 {
@@ -59,7 +57,7 @@ func WriteEvent(
 	}
 
 	// Write timestamp (8 bytes)
-	binary.LittleEndian.PutUint64(buf8, timestamp)
+	binary.LittleEndian.PutUint64(buf8, event.Timestamp)
 	if write(buf8, "timestamp") {
 		return
 	}
@@ -78,7 +76,7 @@ func WriteEvent(
 
 	// Write label
 	if len(event.Label) > 0 {
-		if write(UnsafeS2B(event.Label), "label") {
+		if write(event.Label, "label") {
 			return
 		}
 	}
@@ -88,10 +86,12 @@ func WriteEvent(
 		return
 	}
 
+	// Write previous version (8 bytes)
+	binary.LittleEndian.PutUint64(buf8, event.VersionPrevious)
+	if write(buf8, "previous version") {
+		return
+	}
+
 	err = writer.Sync()
 	return
-}
-
-func UnsafeS2B(s string) []byte {
-	return *(*[]byte)(unsafe.Pointer(&s))
 }

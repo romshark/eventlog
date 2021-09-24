@@ -26,8 +26,9 @@ func TestParse(t *testing.T) {
 			out: cli.ModeOpen{
 				Path: "/path/to/file",
 				HTTP: cli.HTTP{
-					Host:        cli.DefaultHTTPHost,
-					ReadTimeout: cli.DefaultHTTPReadTimeout,
+					Host:             cli.DefaultHTTPHost,
+					ReadTimeout:      cli.DefaultHTTPReadTimeout,
+					MaxScanBatchSize: cli.DefaultMaxScanBatchSize,
 				},
 			},
 		},
@@ -36,12 +37,14 @@ func TestParse(t *testing.T) {
 				"open", "/path/to/file",
 				"-http-host", "testhost:9090",
 				"-http-read-timeout", "5ms",
+				"-http-max-scan-batch-size", "2000",
 			},
 			out: cli.ModeOpen{
 				Path: "/path/to/file",
 				HTTP: cli.HTTP{
-					Host:        "testhost:9090",
-					ReadTimeout: 5 * time.Millisecond,
+					Host:             "testhost:9090",
+					ReadTimeout:      5 * time.Millisecond,
+					MaxScanBatchSize: uint(2000),
 				},
 			},
 		},
@@ -49,8 +52,9 @@ func TestParse(t *testing.T) {
 			in: []string{"inmem"},
 			out: cli.ModeInmem{
 				HTTP: cli.HTTP{
-					Host:        cli.DefaultHTTPHost,
-					ReadTimeout: cli.DefaultHTTPReadTimeout,
+					Host:             cli.DefaultHTTPHost,
+					ReadTimeout:      cli.DefaultHTTPReadTimeout,
+					MaxScanBatchSize: cli.DefaultMaxScanBatchSize,
 				},
 				MetaFields: map[string]string{},
 			},
@@ -65,8 +69,9 @@ func TestParse(t *testing.T) {
 			},
 			out: cli.ModeInmem{
 				HTTP: cli.HTTP{
-					Host:        "testhost:9090",
-					ReadTimeout: 5 * time.Millisecond,
+					Host:             "testhost:9090",
+					ReadTimeout:      5 * time.Millisecond,
+					MaxScanBatchSize: cli.DefaultMaxScanBatchSize,
 				},
 				MetaFields: map[string]string{
 					"foo":  "bar",

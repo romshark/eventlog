@@ -42,7 +42,7 @@ func print(
 }
 
 var helpOptMeta = section{
-	Title: fmt.Sprintf("-%s '<key>:<value>'", ParmMeta),
+	Title: fmt.Sprintf("-%s '<key>:<value>'", ParamMeta),
 	Content: "Appends a new metadata key-value pair separated by a colon " +
 		"to the immutable header of the log file. " +
 		"Can be used multiple times.",
@@ -52,6 +52,13 @@ var helpOptHTTPHost = section{
 	Content: list{
 		"Defines the HTTP API host address.",
 		fmt.Sprintf("Default: '%s'", DefaultHTTPHost),
+	},
+}
+var helpOptHTTPMaxScanBatchSize = section{
+	Title: fmt.Sprintf("-%s <uint>", ParamHTTPMaxScanBatchSize),
+	Content: list{
+		"Defines the HTTP API scan batch size limit.",
+		fmt.Sprintf("Default: '%d'", DefaultMaxScanBatchSize),
 	},
 }
 var helpOptHTTPReadTimeout = section{
@@ -89,6 +96,7 @@ var helpCmdOpen = list{
 		Content: list{
 			helpOptHTTPHost,
 			helpOptHTTPReadTimeout,
+			helpOptHTTPMaxScanBatchSize,
 		},
 	},
 }
@@ -117,7 +125,7 @@ var helpCmdInmem = list{
 	},
 }
 var helpDefaultHelp = list{
-	fmt.Sprintf("usage: eventlog <command> [<parameters>]"),
+	"usage: eventlog <command> [<parameters>]",
 	section{
 		Title: "available commands:",
 		Content: list{

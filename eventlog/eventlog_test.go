@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/eventlog/file"
 	logfile "github.com/romshark/eventlog/eventlog/file"
 	"github.com/romshark/eventlog/eventlog/inmem"
-	"github.com/romshark/eventlog/internal/consts"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,98 +23,167 @@ func TestAppendRead(t *testing.T) {
 		l := s.EventLog
 
 		// Append first event
-		offset1, version1, tm1, err := l.Append(
-			MakeEvent(t, "foo", Payload{"ix": 1}),
+		pv1, v1, tm1, err := l.Append(
+			MakeEvent(t, "1", Payload{"ix": 1}),
 		)
 		require.NoError(t, err)
-		require.Greater(t, version1, offset1)
+		require.Zero(t, pv1)
+		require.Greater(t, v1, pv1)
 		require.WithinDuration(t, time.Now(), tm1, time.Second*1)
 
 		// Append second event
-		offset2, version2, tm2, err := l.Append(
-			MakeEvent(t, "foo", Payload{"ix": 2}),
+		pv2, v2, tm2, err := l.Append(
+			MakeEvent(t, "2", Payload{"ix": 2}),
 		)
 		require.NoError(t, err)
-		require.Greater(t, version2, offset2)
-		require.Greater(t, offset2, offset1)
-		require.Greater(t, version2, version1)
+		require.Equal(t, v1, pv2)
+		require.Greater(t, v2, pv2)
 		require.GreaterOrEqual(t, tm2.Unix(), tm1.Unix())
 
 		// Check-append third event
-		offset3, version3, tm3, err := l.AppendCheck(
-			version2,
-			MakeEvent(t, "foo", Payload{"ix": 3}),
+		v3, tm3, err := l.AppendCheck(
+			v2, MakeEvent(t, "3", Payload{"ix": 3}),
 		)
 		require.NoError(t, err)
-		require.Greater(t, version3, offset3)
-		require.Greater(t, offset3, offset2)
-		require.Greater(t, version3, version2)
+		require.Greater(t, v3, v2)
 		require.GreaterOrEqual(t, tm3.Unix(), tm2.Unix())
 
 		// Append fourth, fifth and sixth event
-		offset4, version4, tm4, err := l.AppendMulti(
-			MakeEvent(t, "foo", Payload{"ix": 4}),
-			MakeEvent(t, "foo", Payload{"ix": 5}),
-			MakeEvent(t, "foo", Payload{"ix": 6}),
+		pv4, fv4, v4, tm4, err := l.AppendMulti(
+			MakeEvent(t, "4", Payload{"ix": 4}),
+			MakeEvent(t, "5", Payload{"ix": 5}),
+			MakeEvent(t, "6", Payload{"ix": 6}),
 		)
 		require.NoError(t, err)
-		require.Greater(t, version4, offset4)
-		require.Greater(t, offset4, offset3)
-		require.Greater(t, version4, version3)
-		require.GreaterOrEqual(t, tm4.Unix(), tm2.Unix())
+		require.Equal(t, pv4, v3)
+		require.Greater(t, fv4, pv4)
+		require.Greater(t, v4, fv4)
+		require.GreaterOrEqual(t, tm4.Unix(), tm3.Unix())
 
 		// Check-append seventh, eighth and ninth event
-		offset5, version5, tm5, err := l.AppendCheckMulti(
-			version4,
-			MakeEvent(t, "foo", Payload{"ix": 7}),
-			MakeEvent(t, "foo", Payload{"ix": 8}),
-			MakeEvent(t, "foo", Payload{"ix": 9}),
+		fv5, v5, tm5, err := l.AppendCheckMulti(
+			v4,
+			MakeEvent(t, "7", Payload{"ix": 7}),
+			MakeEvent(t, "8", Payload{"ix": 8}),
+			MakeEvent(t, "9", Payload{"ix": 9}),
 		)
 		require.NoError(t, err)
-		require.Greater(t, version5, offset5)
-		require.Greater(t, offset5, offset3)
-		require.Greater(t, version5, version3)
-		require.GreaterOrEqual(t, tm5.Unix(), tm2.Unix())
+		require.Greater(t, fv5, v4)
+		require.Greater(t, v5, fv5)
+		require.GreaterOrEqual(t, tm5.Unix(), tm4.Unix())
 
-		// Read all events
-		events, nextOffset, err := scan(l, offset1, 0)
-		require.NoError(t, err)
-		require.Equal(t, l.Version(), nextOffset)
+		t.Run("scan", func(t *testing.T) {
+			// Read all events
+			events, err := scan(l, l.VersionInitial(), false, 0)
+			require.NoError(t, err)
+			require.Len(t, events, 9)
 
-		check(t, events, expected{
-			{"ix": float64(1)},
-			{"ix": float64(2)},
-			{"ix": float64(3)},
-			{"ix": float64(4)},
-			{"ix": float64(5)},
-			{"ix": float64(6)},
-			{"ix": float64(7)},
-			{"ix": float64(8)},
-			{"ix": float64(9)},
+			for i, e := range events {
+				labelInt, err := strconv.Atoi(string(e.Label))
+				require.NoError(t, err)
+
+				require.Equal(t, i+1, labelInt)
+
+				require.Equal(t, Payload{"ix": float64(i + 1)}, Payload(e.Payload))
+				switch {
+				case i == 0:
+					// First
+					v, n := events[i], events[i+1]
+					require.Equal(t, uint64(0), v.VersionPrevious)
+					require.Equal(t, l.VersionInitial(), v.Version)
+					require.Equal(t, n.Version, v.VersionNext)
+					require.GreaterOrEqual(t, n.Time.Unix(), v.Time.Unix())
+				case i+1 == len(events):
+					// Last
+					p, v := events[i-1], events[i]
+					require.Equal(t, p.Version, v.VersionPrevious)
+					require.Equal(t, p.VersionNext, v.Version)
+					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
+					require.WithinDuration(t, time.Now(), v.Time, time.Second)
+				default:
+					// Inbetween
+					p, v, n := events[i-1], events[i], events[i+1]
+					require.Equal(t, p.Version, v.VersionPrevious)
+					require.Equal(t, p.VersionNext, v.Version)
+					require.Equal(t, n.VersionPrevious, v.Version)
+					require.Equal(t, n.Version, v.VersionNext)
+					require.GreaterOrEqual(t, n.Time.Unix(), v.Time.Unix())
+					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
+				}
+			}
 		})
 
-		// Read metadata
-		m := make(map[string]string, l.MetadataLen())
-		l.ScanMetadata(func(f, v string) bool {
-			m[f] = v
-			return true
+		t.Run("scan reverse", func(t *testing.T) {
+			events, err := scan(l, l.Version(), true, 0)
+			require.NoError(t, err)
+			require.Len(t, events, 9)
+
+			expectedLabelCounter := 1
+			for i := len(events) - 1; i >= 0; i-- {
+				e := events[i]
+
+				labelInt, err := strconv.Atoi(string(e.Label))
+				require.NoError(t, err)
+
+				require.Equal(t, expectedLabelCounter, labelInt)
+				require.Equal(t, Payload{
+					"ix": float64(expectedLabelCounter),
+				}, Payload(e.Payload))
+
+				expectedLabelCounter++
+
+				switch {
+				case i+1 == len(events):
+					// First
+					v, n := events[i], events[i-1]
+					require.Equal(t, uint64(0), v.VersionPrevious)
+					require.Equal(t, l.VersionInitial(), v.Version)
+					require.Equal(t, n.Version, v.VersionNext)
+					require.GreaterOrEqual(t, n.Time.Unix(), v.Time.Unix())
+				case i < 1:
+					// Last
+					p, v := events[i+1], events[i]
+					require.Equal(t, p.Version, v.VersionPrevious)
+					require.Equal(t, p.VersionNext, v.Version)
+					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
+					require.WithinDuration(t, time.Now(), v.Time, time.Second)
+				default:
+					// Inbetween
+					p, v, n := events[i+1], events[i], events[i-1]
+					require.Equal(t, p.Version, v.VersionPrevious)
+					require.Equal(t, p.VersionNext, v.Version)
+					require.Equal(t, n.VersionPrevious, v.Version)
+					require.Equal(t, n.Version, v.VersionNext)
+					require.GreaterOrEqual(t, n.Time.Unix(), v.Time.Unix())
+					require.GreaterOrEqual(t, v.Time.Unix(), p.Time.Unix())
+				}
+			}
 		})
-		require.Len(t, m, len(s.Metadata))
-		for f, v := range s.Metadata {
-			require.Contains(t, m, f)
-			require.Equal(t, v, m[f])
-		}
+
+		t.Run("scan meta", func(t *testing.T) {
+			// Read metadata
+			m := make(map[string]string, l.MetadataLen())
+			l.ScanMetadata(func(f, v string) bool {
+				m[f] = v
+				return true
+			})
+			require.Len(t, m, len(s.Metadata))
+			for f, v := range s.Metadata {
+				require.Contains(t, m, f)
+				require.Equal(t, v, m[f])
+			}
+		})
 	})
 }
 
-// TestAppendReadUTF8 assumes regular reading and writing
+// TestPayloadUTF8 assumes regular reading and writing
 // events with UTF-8 encoded payloads to succeed
-func TestAppendReadUTF8(t *testing.T) {
+func TestPayloadUTF8(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
 
-		// Append first event
-		newOffset, newVersion, _, err := l.Append(
+		// Append event
+		_, v1, _, err := l.Append(
 			MakeEvent(t, "i18n", Payload{
 				"ключ":     "значение",
 				"გასაღები": "მნიშვნელობა",
@@ -121,23 +192,29 @@ func TestAppendReadUTF8(t *testing.T) {
 		require.NoError(t, err)
 
 		// Read event
-		events, nextOffset, err := scan(l, newOffset, 0)
+		events, err := scan(l, v1, false, 0)
 		require.NoError(t, err)
-		require.Equal(t, l.Version(), nextOffset)
-		require.Equal(t, l.Version(), newVersion)
+		require.Equal(t, v1, l.Version())
 
-		check(t, events, expected{
-			{
+		require.Len(t, events, 1)
+		{
+			v := events[0]
+			require.Equal(t, "i18n", string(v.Label))
+			require.Equal(t, Payload{
 				"ключ":     "значение",
 				"გასაღები": "მნიშვნელობა",
-			},
-		})
+			}, Payload(v.Payload))
+			require.Zero(t, v.VersionPrevious)
+			require.Equal(t, l.VersionInitial(), v.Version)
+			require.Equal(t, l.Version(), v.Version)
+			require.Zero(t, v.VersionNext)
+			require.WithinDuration(t, time.Now(), v.Time, time.Second)
+		}
 	})
 }
 
 // TestAppendInvalidPayload assumes ErrInvalidPayload
-// to be returned when reading with an offset
-// that's >= the length of the log
+// to be returned when appending invalid JSON payloads
 func TestAppendInvalidPayload(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
@@ -147,13 +224,13 @@ func TestAppendInvalidPayload(t *testing.T) {
 				"%t_%s",
 				successExpect, input,
 			), func(t *testing.T) {
-				offset, version, tm, err := l.Append(eventlog.Event{
-					Label:       "foo",
+				pv, v, tm, err := l.Append(eventlog.EventData{
+					Label:       []byte("foo"),
 					PayloadJSON: []byte(input),
 				})
 				if successExpect {
 					require.NoError(t, err)
-					require.Greater(t, version, uint64(0))
+					require.Greater(t, v, pv)
 					require.WithinDuration(t, time.Now(), tm, timeTolerance)
 				} else {
 					require.Error(t, err)
@@ -162,8 +239,8 @@ func TestAppendInvalidPayload(t *testing.T) {
 						"unexpected error: %s",
 						err,
 					)
-					require.Zero(t, offset)
-					require.Zero(t, version)
+					require.Zero(t, pv)
+					require.Zero(t, v)
 					require.Zero(t, tm)
 				}
 			})
@@ -172,19 +249,20 @@ func TestAppendInvalidPayload(t *testing.T) {
 }
 
 // TestAppendInvalidLabel assumes ErrLabelContainsIllegalChar to be returned
+// when using illegal characters for the label
 func TestAppendInvalidLabel(t *testing.T) {
 	validPayload := []byte(`{"x":0}`)
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
 
 		for _, cs := range validateTestLabel() {
-			offset, version, tm, err := l.Append(eventlog.Event{
-				Label:       cs.Label,
+			pv, v, tm, err := l.Append(eventlog.EventData{
+				Label:       []byte(cs.Label),
 				PayloadJSON: validPayload,
 			})
 			if cs.Legal {
 				require.NoError(t, err)
-				require.Greater(t, version, uint64(0))
+				require.Greater(t, v, pv)
 				require.WithinDuration(t, time.Now(), tm, timeTolerance)
 			} else {
 				require.Error(t, err)
@@ -193,108 +271,30 @@ func TestAppendInvalidLabel(t *testing.T) {
 					"unexpected error: %s",
 					err,
 				)
-				require.Zero(t, offset)
-				require.Zero(t, version)
+				require.Zero(t, pv)
+				require.Zero(t, v)
 				require.Zero(t, tm)
 			}
 		}
 	})
 }
 
-// TestReadN assumes no errors when reading a limited slice
-func TestReadN(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		const numEvents = 10
-
-		var latestVersion uint64
-		offsets := make([]uint64, 0, numEvents)
-		for i := 0; i < numEvents; i++ {
-			var offset uint64
-			var err error
-			offset, latestVersion, _, err = l.Append(
-				MakeEvent(t, "foo", Payload{"index": i}),
-			)
-			require.NoError(t, err)
-			offsets = append(offsets, offset)
-		}
-
-		// Read the first half of events
-		events, nextOffset, err := scan(l, l.FirstOffset(), 5)
-		require.NoError(t, err)
-		require.Equal(t, offsets[5], nextOffset)
-
-		check(t, events, expected{
-			{"index": float64(0)},
-			{"index": float64(1)},
-			{"index": float64(2)},
-			{"index": float64(3)},
-			{"index": float64(4)},
-		})
-
-		// Read the second half of events using the offset
-		// of the next item from the previous scan
-		events, nextOffset, err = scan(l, nextOffset, 5)
-		require.NoError(t, err)
-		require.Equal(t, latestVersion, nextOffset)
-
-		check(t, events, expected{
-			{"index": float64(5)},
-			{"index": float64(6)},
-			{"index": float64(7)},
-			{"index": float64(8)},
-			{"index": float64(9)},
-		})
-	})
-}
-
-// TestReadNGreaterLen assumes no errors when reading n logs where
-// n is greater than the actual log size
-func TestReadNGreaterLen(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		const numEvents = 5
-
-		var latestVersion uint64
-		for i := 0; i < numEvents; i++ {
-			var err error
-			_, latestVersion, _, err = l.Append(
-				MakeEvent(t, "foo", Payload{"index": i}),
-			)
-			require.NoError(t, err)
-		}
-
-		// Read more events than there actually are
-		events, nextOffset, err := scan(l, l.FirstOffset(), numEvents+1)
-		require.NoError(t, err)
-		require.Equal(t, latestVersion, nextOffset)
-
-		check(t, events, expected{
-			{"index": float64(0)},
-			{"index": float64(1)},
-			{"index": float64(2)},
-			{"index": float64(3)},
-			{"index": float64(4)},
-		})
-	})
-}
-
 // TestAppendVersionMismatch assumes an ErrMismatchingVersions
-// to be returned when trying to append with an outdated offset
+// to be returned when trying to append with an outdated version
 func TestAppendVersionMismatch(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
 
 		// Append first event
-		_, version, _, err := l.Append(MakeEvent(t, "foo", Payload{"index": "0"}))
+		_, v, _, err := l.Append(MakeEvent(t, "foo", Payload{"index": "0"}))
 		require.NoError(t, err)
-		require.Greater(t, version, uint64(0))
+		require.Greater(t, v, uint64(0))
 
-		// Try to append second event on an invalid version offset
-		offset, newVersion, tm, err := l.AppendCheck(
-			version+1, // Mismatching version
+		// Try to append second event on an invalid version
+		assumed := v + 1
+		require.NotEqual(t, l.Version(), assumed)
+		v2, tm, err := l.AppendCheck(
+			assumed, // Not the current version
 			MakeEvent(t, "foo", Payload{"index": "1"}),
 		)
 		require.Error(t, err)
@@ -304,236 +304,70 @@ func TestAppendVersionMismatch(t *testing.T) {
 			"unexpected error: %s",
 			err,
 		)
-		require.Zero(t, newVersion)
-		require.Zero(t, offset)
+		require.Zero(t, v2)
 		require.Zero(t, tm)
 
-		events, nextOffset, err := scan(l, l.FirstOffset(), 0)
+		events, err := scan(l, l.VersionInitial(), false, 0)
 		require.NoError(t, err)
-		require.Equal(t, version, nextOffset)
 
-		check(t, events, expected{
-			{"index": "0"},
-		})
+		require.Len(t, events, 1)
 	})
 }
 
-// TestReadEmptyLog assumes an ErrOffsetOutOfBound error
-// to be returned when reading at offset 0 on an empty event log
-func TestReadEmptyLog(t *testing.T) {
+// TestScanEmptyLog assumes ErrInvalidVersion to be returned
+// when reading at version 0 on an empty event log
+func TestScanEmptyLog(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
 
-		events, nextOffset, err := scan(l, l.FirstOffset(), 0)
-		require.Error(t, err)
-		require.True(
-			t,
-			errors.Is(err, eventlog.ErrOffsetOutOfBound),
-			"unexpected error: %s",
-			err,
-		)
-		require.Zero(t, nextOffset)
+		fv := l.VersionInitial()
+		require.Zero(t, fv)
 
-		require.Len(t, events, 0)
-	})
-}
+		check := func() {
+			events, err := scan(l, fv, false, 0)
+			require.Error(t, err)
+			require.True(
+				t,
+				errors.Is(err, eventlog.ErrInvalidVersion),
+				"unexpected error: %s",
+				err,
+			)
+			require.Len(t, events, 0)
+		}
 
-// TestReadOffsetOutOfBound assumes ErrOffsetOutOfBound
-// to be returned when reading with an offset
-// that's >= the length of the log
-func TestReadOffsetOutOfBound(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
+		check()
 
-		// Append first event
-		_, newVersion, _, err := l.Append(
+		_, _, _, err := l.Append(
 			MakeEvent(t, "foo", Payload{"index": "0"}),
 		)
 		require.NoError(t, err)
 
-		events, nextOffset, err := scan(l, newVersion, 0)
+		check()
+	})
+}
+
+// TestScanVersionOutOfBound assumes ErrInvalidVersion to be returned
+// when reading with a version that's >= the length of the log
+func TestScanVersionOutOfBound(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
+		// Append first event
+		_, v, _, err := l.Append(
+			MakeEvent(t, "foo", Payload{"index": "0"}),
+		)
+		require.NoError(t, err)
+
+		events, err := scan(l, v+1, false, 0)
 		require.Error(t, err)
 		require.True(
 			t,
-			errors.Is(err, eventlog.ErrOffsetOutOfBound),
+			errors.Is(err, eventlog.ErrInvalidVersion),
 			"unexpected error: %s",
 			err,
 		)
-		require.Zero(t, nextOffset)
 
-		check(t, events, expected{})
-	})
-}
-
-func TestScanSingle(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		e := make([]struct {
-			Time   time.Time
-			Offset uint64
-			Event  eventlog.Event
-		}, 3)
-
-		for i := range e {
-			var err error
-			e[i].Event = MakeEvent(t, "foo", Payload{"index": i})
-			e[i].Offset, _, e[i].Time, err = l.Append(e[i].Event)
-			require.NoError(t, err)
-		}
-
-		scanOffset := l.FirstOffset()
-		for i, v := range e {
-			var calls int
-			nextOffset, err := l.Scan(scanOffset, 1, func(
-				offset uint64,
-				timestamp uint64,
-				label []byte,
-				payloadJSON []byte,
-			) error {
-				calls++
-				require.Equal(t, uint64(v.Time.Unix()), timestamp)
-				require.Equal(t, v.Offset, offset)
-				require.Equal(t, v.Event.Label, string(label))
-				require.Equal(t,
-					string(v.Event.PayloadJSON),
-					string(payloadJSON),
-				)
-				return nil
-			})
-			require.NoError(t, err)
-			require.Equal(t, 1, calls)
-			if i < len(e)-1 {
-				require.Equal(t, e[i+1].Offset, nextOffset)
-			} else {
-				require.Equal(t, l.Version(), nextOffset)
-			}
-			scanOffset = nextOffset
-		}
-	})
-}
-
-func TestScanUnlimited(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		e := make([]struct {
-			Time   time.Time
-			Offset uint64
-			Event  eventlog.Event
-		}, 3)
-
-		for i := range e {
-			var err error
-			e[i].Event = MakeEvent(t, "foo", Payload{"index": i})
-			e[i].Offset, _, e[i].Time, err = l.Append(e[i].Event)
-			require.NoError(t, err)
-		}
-
-		var counter int
-		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
-			offset uint64,
-			timestamp uint64,
-			label []byte,
-			payloadJSON []byte,
-		) error {
-			v := e[counter]
-			counter++
-
-			require.Equal(t, uint64(v.Time.Unix()), timestamp)
-			require.Equal(t, v.Offset, offset)
-			require.Equal(t, v.Event.Label, string(label))
-			require.Equal(t,
-				string(v.Event.PayloadJSON),
-				string(payloadJSON),
-			)
-
-			return nil
-		})
-		require.NoError(t, err)
-		require.Equal(t, 3, counter)
-		require.Equal(t, l.Version(), nextOffset)
-	})
-}
-
-func TestScanExceedLenght(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		e := make([]struct {
-			Time   time.Time
-			Offset uint64
-			Event  eventlog.Event
-		}, 3)
-
-		for i := range e {
-			var err error
-			e[i].Event = MakeEvent(t, "foo", Payload{"index": i})
-			e[i].Offset, _, e[i].Time, err = l.Append(e[i].Event)
-			require.NoError(t, err)
-		}
-
-		scanFor := uint64(len(e)) * 2
-		var counter int
-		nextOffset, err := l.Scan(l.FirstOffset(), scanFor, func(
-			offset uint64,
-			timestamp uint64,
-			label []byte,
-			payloadJSON []byte,
-		) error {
-			v := e[counter]
-			counter++
-
-			require.Equal(t, uint64(v.Time.Unix()), timestamp)
-			require.Equal(t, v.Offset, offset)
-			require.Equal(t, v.Event.Label, string(label))
-			require.Equal(t,
-				string(v.Event.PayloadJSON),
-				string(payloadJSON),
-			)
-
-			return nil
-		})
-		require.NoError(t, err)
-		require.Equal(t, 3, counter)
-		require.Equal(t, l.Version(), nextOffset)
-	})
-}
-
-func TestScanErrOffsetOutOfBound(t *testing.T) {
-	test(t, func(t *testing.T, s Setup) {
-		l := s.EventLog
-
-		var counter int
-		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
-			uint64, uint64, []byte, []byte,
-		) error {
-			counter++
-			return nil
-		})
-		require.Error(t, err)
-		require.True(t,
-			errors.Is(err, eventlog.ErrOffsetOutOfBound),
-			"unexpected error: (%T) %s", err, err.Error(),
-		)
-		require.Zero(t, counter)
-		require.Zero(t, nextOffset)
-
-		// Try zero-offset
-		nextOffset, err = l.Scan(
-			0, 0,
-			func(uint64, uint64, []byte, []byte) error {
-				counter++
-				return nil
-			},
-		)
-		require.Error(t, err)
-		require.True(t,
-			errors.Is(err, eventlog.ErrOffsetOutOfBound),
-			"unexpected error: (%T) %s", err, err.Error(),
-		)
-		require.Zero(t, counter)
-		require.Zero(t, nextOffset)
+		require.Len(t, events, 0)
 	})
 }
 
@@ -541,45 +375,23 @@ func TestScanReturnErr(t *testing.T) {
 	test(t, func(t *testing.T, s Setup) {
 		l := s.EventLog
 
-		e := make([]struct {
-			Time   time.Time
-			Offset uint64
-			Event  eventlog.Event
-		}, 3)
-
-		for i := range e {
-			var err error
-			e[i].Event = MakeEvent(t, "foo", Payload{"index": i})
-			e[i].Offset, _, e[i].Time, err = l.Append(e[i].Event)
-			require.NoError(t, err)
-		}
+		_, _, _, err := l.Append(MakeEvent(t, "foo", Payload{"i": 1}))
+		require.NoError(t, err)
+		_, _, _, err = l.Append(MakeEvent(t, "bar", Payload{"i": 2}))
+		require.NoError(t, err)
+		_, _, _, err = l.Append(MakeEvent(t, "baz", Payload{"i": 3}))
+		require.NoError(t, err)
 
 		testErr := errors.New("test error")
 
 		var counter int
-		nextOffset, err := l.Scan(l.FirstOffset(), 0, func(
-			offset uint64,
-			timestamp uint64,
-			label []byte,
-			payloadJSON []byte,
-		) error {
+		err = l.Scan(l.VersionInitial(), false, func(eventlog.Event) error {
 			counter++
-
-			v := e[0]
-			require.Equal(t, uint64(v.Time.Unix()), timestamp)
-			require.Equal(t, v.Offset, offset)
-			require.Equal(t, v.Event.Label, string(label))
-			require.Equal(t,
-				string(v.Event.PayloadJSON),
-				string(payloadJSON),
-			)
-
 			return testErr
 		})
 		require.Error(t, err)
 		require.True(t, errors.Is(err, testErr))
 		require.Equal(t, 1, counter)
-		require.Equal(t, e[1].Offset, nextOffset)
 	})
 }
 
@@ -609,18 +421,18 @@ func test(t *testing.T, fn func(*testing.T, Setup)) {
 	})
 
 	t.Run("File", func(t *testing.T) {
-		filePath := fmt.Sprintf(
-			"%s/test_%s_%s",
-			t.TempDir(),
+		filePath := filepath.Join(t.TempDir(), fmt.Sprintf(
+			"test_%s_%s",
 			strings.ReplaceAll(t.Name(), "/", "_"),
-			time.Now().Format(time.RFC3339Nano),
-		)
+			time.Now().Format("2006_01_02T15_04_05_999999999Z07_00"),
+		))
 
 		err := logfile.Create(filePath, meta(), 0777)
 		require.NoError(t, err)
 
 		e, err := logfile.Open(filePath)
 		require.NoError(t, err)
+		defer e.Close()
 		require.NotNil(t, e)
 
 		fn(t, Setup{
@@ -632,71 +444,59 @@ func test(t *testing.T, fn func(*testing.T, Setup)) {
 
 func scan(
 	l *eventlog.EventLog,
-	offset, n uint64,
-) ([]Event, uint64, error) {
+	version uint64,
+	reverse bool,
+	limit int,
+) ([]Event, error) {
 	var events []Event
-	nextOffset, err := l.Scan(offset, n, func(
-		offset uint64,
-		timestamp uint64,
-		label []byte,
-		payloadJSON []byte,
-	) error {
+	i := 0
+	errAbort := errors.New("abort")
+	err := l.Scan(version, reverse, func(e eventlog.Event) error {
 		var data map[string]interface{}
-		if err := json.Unmarshal(payloadJSON, &data); err != nil {
+		if err := json.Unmarshal(e.PayloadJSON, &data); err != nil {
 			return fmt.Errorf("unexpected error: %w", err)
 		}
 
 		events = append(events, Event{
-			Offset:  offset,
-			Time:    time.Unix(int64(timestamp), 0),
-			Label:   string(label),
-			Payload: data,
+			Version:         e.Version,
+			VersionPrevious: e.VersionPrevious,
+			VersionNext:     e.VersionNext,
+			Time:            time.Unix(int64(e.Timestamp), 0),
+			Label:           string(e.Label),
+			Payload:         data,
 		})
 
+		i++
+		if limit > 0 && i >= limit {
+			return errAbort
+		}
 		return nil
 	})
-	return events, nextOffset, err
+
+	if err == errAbort {
+		err = nil
+	}
+
+	return events, err
 }
 
 const timeTolerance = 1 * time.Second
 
-type expected []map[string]interface{}
 type Event struct {
-	Offset  uint64
-	Time    time.Time
-	Label   string
-	Payload map[string]interface{}
-}
-
-func check(
-	t *testing.T,
-	actual []Event,
-	expected expected,
-) {
-	require.Len(t, actual, len(expected))
-	for i, payload := range expected {
-		a := actual[i]
-
-		require.WithinDuration(t, time.Now(), a.Time, 3*time.Second)
-
-		if i > 0 {
-			previousTime := actual[i-1].Time
-			require.False(t, a.Time.Unix() < previousTime.Unix())
-		}
-
-		for k, v := range payload {
-			require.Contains(t, a.Payload, k)
-			require.Equal(t, v, a.Payload[k])
-		}
-	}
+	Version         uint64
+	VersionPrevious uint64
+	VersionNext     uint64
+	Time            time.Time
+	Label           string
+	Payload         map[string]interface{}
 }
 
 type Payload map[string]interface{}
 
-func MakeEvent(t *testing.T, label string, p Payload) eventlog.Event {
+func MakeEvent(t *testing.T, label string, p Payload) eventlog.EventData {
 	b, err := json.Marshal(p)
 	require.NoError(t, err)
-	return eventlog.Event{Label: label, PayloadJSON: b}
+	return eventlog.EventData{Label: []byte(label), PayloadJSON: b}
 }
 
 func validationTestJSON() map[string]bool {
@@ -766,7 +566,7 @@ func validateTestLabel() []LabelTestCase {
 		Name:  "max possible len",
 		Legal: true,
 		Label: func() string {
-			s := make([]byte, consts.MaxLabelLen)
+			s := make([]byte, file.MaxLabelLen)
 			for i := range s {
 				s[i] = 'x'
 			}

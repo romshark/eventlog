@@ -6,12 +6,12 @@ import (
 	"errors"
 
 	"github.com/romshark/eventlog/eventlog"
-	"github.com/romshark/eventlog/internal/consts"
+	"github.com/romshark/eventlog/internal"
 )
 
 // EncodeBinary encodes the events into a binary message
 // in the format: [label_len(2)][payload_len(4)][label][payload]
-func EncodeBinary(events ...eventlog.Event) ([]byte, error) {
+func EncodeBinary(events ...eventlog.EventData) ([]byte, error) {
 	if len(events) < 1 {
 		return nil, nil
 	}
@@ -20,7 +20,7 @@ func EncodeBinary(events ...eventlog.Event) ([]byte, error) {
 		if len(e.PayloadJSON) < 1 {
 			return nil, eventlog.ErrInvalidPayload
 		}
-		if len(e.Label) > consts.MaxLabelLen {
+		if len(e.Label) > internal.MaxLabelLen {
 			return nil, eventlog.ErrLabelTooLong
 		}
 		// Calculate payload length
@@ -44,8 +44,8 @@ func EncodeBinary(events ...eventlog.Event) ([]byte, error) {
 		_, _ = buf.Write(buf4)
 
 		// Write label
-		if e.Label != "" {
-			_, _ = buf.WriteString(e.Label)
+		if len(e.Label) > 0 {
+			_, _ = buf.Write(e.Label)
 		}
 
 		// Write Payload

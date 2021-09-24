@@ -7,19 +7,25 @@ import (
 	"time"
 )
 
+// Commands
 const (
 	CmdInmem  = "inmem"
 	CmdCreate = "create"
 	CmdOpen   = "open"
 	CmdCheck  = "check"
 	CmdHelp   = "help"
-
-	ParamVerbose         = "verbose"
-	ParmMeta             = "m"
-	ParamHTTPHost        = "http-host"
-	ParamHTTPReadTimeout = "http-read-timeout"
 )
 
+// Parameters
+const (
+	ParamVerbose              = "verbose"
+	ParamMeta                 = "m"
+	ParamHTTPHost             = "http-host"
+	ParamHTTPReadTimeout      = "http-read-timeout"
+	ParamHTTPMaxScanBatchSize = "http-max-scan-batch-size"
+)
+
+// Parse parses CLI commands and arguments.
 func Parse(args []string) (mode interface{}, err error) {
 	if a := args; len(a) < 1 {
 		return nil, fmt.Errorf("missing command")
@@ -53,6 +59,7 @@ func newFlagSet() *flag.FlagSet {
 func httpArgs(flags *flag.FlagSet) (
 	flagHTTPHost *string,
 	flagHTTPReadTimeout *time.Duration,
+	flagMaxScanBatchSize *uint,
 ) {
 	flagHTTPHost = flags.String(
 		ParamHTTPHost,
@@ -64,18 +71,26 @@ func httpArgs(flags *flag.FlagSet) (
 		DefaultHTTPReadTimeout,
 		"read timeout of the HTTP API server",
 	)
+	flagMaxScanBatchSize = flags.Uint(
+		ParamHTTPMaxScanBatchSize,
+		DefaultMaxScanBatchSize,
+		"scan batch size limit",
+	)
 	return
 }
 
 type HTTP struct {
-	Host        string
-	ReadTimeout time.Duration
+	Host             string
+	ReadTimeout      time.Duration
+	MaxScanBatchSize uint
 }
 
+// Default values
 const (
-	DefaultHTTPHost        = ":8080"
-	DefaultHTTPReadTimeout = 2 * time.Second
-	DefaultCheckVerbose    = true
+	DefaultHTTPHost         = ":8080"
+	DefaultHTTPReadTimeout  = 2 * time.Second
+	DefaultCheckVerbose     = true
+	DefaultMaxScanBatchSize = 1000
 )
 
 func parseMetaFields(fields []string) (map[string]string, error) {

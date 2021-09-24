@@ -1,4 +1,4 @@
-package main_test
+package bench_test
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	apifasthttp "github.com/romshark/eventlog/api/fasthttp"
 	"github.com/romshark/eventlog/client"
 	"github.com/romshark/eventlog/eventlog"
 	evfile "github.com/romshark/eventlog/eventlog/file"
-	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
 
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
@@ -43,7 +43,7 @@ func newBenchmarkSetup(b *testing.B) *client.Client {
 
 	ln := fasthttputil.NewInmemoryListener()
 
-	server := ffhttp.New(nil, eventlog.New(l))
+	server := apifasthttp.New(nil, eventlog.New(l), 1000)
 	httpServer := &fasthttp.Server{
 		Handler:     server.Serve,
 		ReadTimeout: 10 * time.Millisecond,
@@ -91,9 +91,9 @@ func BenchmarkFileHTTP_Append_P128(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _, _, err := clt.Append(
 			context.Background(),
-			eventlog.Event{
-				Label:       label,
-				PayloadJSON: payload,
+			eventlog.EventData{
+				Label:       []byte(label),
+				PayloadJSON: []byte(payload),
 			},
 		)
 		panicOnErr(err)
@@ -114,21 +114,21 @@ func BenchmarkFileHTTP_AppendCheck_P128(b *testing.B) {
 
 	_, newVersion, _, err := clt.Append(
 		context.Background(),
-		eventlog.Event{
-			Label:       label,
-			PayloadJSON: payload,
+		eventlog.EventData{
+			Label:       []byte(label),
+			PayloadJSON: []byte(payload),
 		},
 	)
 	panicOnErr(err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, newVersion, _, err = clt.AppendCheck(
+		newVersion, _, err = clt.AppendCheck(
 			context.Background(),
 			newVersion,
-			eventlog.Event{
-				Label:       label,
-				PayloadJSON: payload,
+			eventlog.EventData{
+				Label:       []byte(label),
+				PayloadJSON: []byte(payload),
 			},
 		)
 		panicOnErr(err)
@@ -140,7 +140,7 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 
 	const numEvents = uint(1000)
 
-	var offset string
+	var version string
 
 	label := "BenchmarkEvent"
 	payload := []byte(`{
@@ -152,13 +152,13 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 	}`)
 
 	for i := uint(0); i < numEvents; i++ {
-		o, _, _, err := clt.Append(context.Background(), eventlog.Event{
-			Label:       label,
-			PayloadJSON: payload,
+		o, _, _, err := clt.Append(context.Background(), eventlog.EventData{
+			Label:       []byte(label),
+			PayloadJSON: []byte(payload),
 		})
 		panicOnErr(err)
 		if i < 1 {
-			offset = o
+			version = o
 		}
 	}
 
@@ -168,15 +168,9 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 		counter := uint(0)
 		panicOnErr(clt.Scan(
 			context.Background(),
-			offset,
-			numEvents,
-			func(
-				offset string,
-				timestamp time.Time,
-				label []byte,
-				payload []byte,
-				next string,
-			) error {
+			version,
+			false,
+			func(e client.Event) error {
 				counter++
 				return nil
 			},

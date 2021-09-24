@@ -19,5 +19,5 @@ func handleOpen(
 	}
 
 	eventLog := eventlog.New(f)
-	launchFrontendFastHTTP(logInfo, logErr, eventLog, m.HTTP)
+	launchAPIFastHTTP(logInfo, logErr, eventLog, m.HTTP)
 }

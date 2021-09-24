@@ -7,6 +7,7 @@ import (
 	bin "github.com/romshark/eventlog/internal/bin"
 	"github.com/romshark/eventlog/internal/makestr"
 	"github.com/romshark/eventlog/internal/msgcodec"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,10 +37,10 @@ func TestCodecBinary(t *testing.T) {
 		}},
 	} {
 		t.Run(t1.name, func(t *testing.T) {
-			in := make([]eventlog.Event, len(t1.expected))
+			in := make([]eventlog.EventData, len(t1.expected))
 			for i, e := range t1.expected {
-				in[i] = eventlog.Event{
-					Label:       e.Label,
+				in[i] = eventlog.EventData{
+					Label:       []byte(e.Label),
 					PayloadJSON: []byte(e.PayloadJSON),
 				}
 			}

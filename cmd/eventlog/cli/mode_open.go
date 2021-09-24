@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 )
 
 type ModeOpen struct {
@@ -16,11 +17,15 @@ func parseModeOpen(args []string) (m ModeOpen, err error) {
 	m.Path = args[0]
 
 	flags := newFlagSet()
-	flagHTTPHost, flagHTTPReadTimeout := httpArgs(flags)
-	flags.Parse(args[1:])
+	flagHTTPHost, flagHTTPReadTimeout, flagMaxScanBatchSize := httpArgs(flags)
+	if err = flags.Parse(args[1:]); err != nil {
+		err = fmt.Errorf("parsing flags: %w", err)
+		return
+	}
 
 	m.HTTP.Host = *flagHTTPHost
 	m.HTTP.ReadTimeout = *flagHTTPReadTimeout
+	m.HTTP.MaxScanBatchSize = *flagMaxScanBatchSize
 
 	return m, nil
 }

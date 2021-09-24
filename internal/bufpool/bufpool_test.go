@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/romshark/eventlog/internal/bufpool"
+
 	"github.com/stretchr/testify/require"
 )
 

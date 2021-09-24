@@ -5,26 +5,29 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/romshark/eventlog/internal"
 	"github.com/romshark/eventlog/internal/broadcast"
-	"github.com/romshark/eventlog/internal/consts"
 	"github.com/romshark/eventlog/internal/jsonminify"
 )
 
-// ScanFn is called by EventLog.Scan for each scanned event
-type ScanFn func(
-	offset uint64,
-	timestamp uint64,
-	label []byte,
-	payloadJSON []byte,
-) error
+// ScanFn is called by EventLog.Scan for each scanned event.
+type ScanFn func(Event) error
 
 type Event struct {
-	Label       string
+	EventData
+	Timestamp       uint64
+	Version         uint64
+	VersionNext     uint64
+	VersionPrevious uint64
+}
+
+type EventData struct {
+	Label       []byte
 	PayloadJSON []byte
 }
 
-// Validate validates the label and JSON payload
-func (e Event) Validate() error {
+// Validate validates the label and JSON payload.
+func (e EventData) Validate() error {
 	if err := ValidateLabel(e.Label); err != nil {
 		return err
 	}
@@ -34,92 +37,78 @@ func (e Event) Validate() error {
 	return nil
 }
 
-// Implementer represents an event log engine's implementer
-type Implementer interface {
-	// MetadataLen returns the number of metadata fields
+// EventLogger represents an abstract event logger.
+type EventLogger interface {
+	// MetadataLen returns the number of metadata fields.
 	MetadataLen() int
 
 	// ScanMetadata iterates over all metadata fields calling fn for each.
-	// The scan is interrupted if fn returns false
+	// The scan is interrupted if fn returns false.
 	ScanMetadata(fn func(field, value string) bool)
 
-	// Version returns the current version of the log
+	// Version returns the latest version of the log.
 	Version() uint64
 
-	// FirstOffset returns the offset of the first entry in the log
-	FirstOffset() uint64
+	// VersionInitial returns either the initial version of the log
+	// or 0 if the log is empty.
+	VersionInitial() uint64
 
-	// Append appends an event with the given payload to the log
-	Append(event Event) (
-		offset uint64,
-		newVersion uint64,
+	// Append appends an event with the given payload to the log.
+	Append(event EventData) (
+		versionPrevious uint64,
+		version uint64,
 		tm time.Time,
 		err error,
 	)
 
-	// Append appends multiple events with the given payloads to the log
-	AppendMulti(events ...Event) (
-		offset uint64,
-		newVersion uint64,
+	// AppendMulti appends multiple events with the given payloads to the log.
+	AppendMulti(events ...EventData) (
+		versionPrevious uint64,
+		versionFirst uint64,
+		version uint64,
 		tm time.Time,
 		err error,
 	)
 
 	// AppendCheck appends an event with the given payload
-	// only if the offset matches the offset of the last
-	// entry in the log minus 1. If the offset doesn't match
-	// the log's version it will be rejected and ErrMismatchingVersions
-	// is returned instead
+	// only if assumedVersion matches the latest version of the log,
+	// otherwise the event is rejected and ErrMismatchingVersions is returned.
 	AppendCheck(
 		assumedVersion uint64,
-		event Event,
+		event EventData,
 	) (
-		offset uint64,
-		newVersion uint64,
+		version uint64,
 		tm time.Time,
 		err error,
 	)
 
 	// AppendCheckMulti appends multiple events with the given payloads
-	// only if the offset matches the offset of the last
-	// entry in the log minus 1. If the offset doesn't match
-	// the log's version it will be rejected and ErrMismatchingVersions
-	// is returned instead
+	// only if assumedVersion matches the latest version of the log,
+	// otherwise the events are rejected and ErrMismatchingVersions is returned.
 	AppendCheckMulti(
 		assumedVersion uint64,
-		events ...Event,
+		events ...EventData,
 	) (
-		offset uint64,
-		newVersion uint64,
+		versionFirst uint64,
+		version uint64,
 		tm time.Time,
 		err error,
 	)
 
-	// Scan reads n events at the given offset
-	// calling the given callback function for each read entry.
-	// The scan is resumed as long as there are events to be read
-	// and the callback function returns true.
-	// If the returned nextOffset is 0 then there are no more
-	// entries to be scanned after the last scanned one
-	Scan(
-		offset uint64,
-		n uint64,
-		fn ScanFn,
-	) (
-		nextOffset uint64,
-		err error,
-	)
+	// Scan reads events starting (including) at the given version.
+	// Events are read in reversed order if reverse == true.
+	// fn is called for every scanned event.
+	Scan(version uint64, reverse bool, fn ScanFn) error
 
 	Close() error
 }
 
 var (
-	ErrOffsetOutOfBound    = errors.New("offset out of bound")
 	ErrMismatchingVersions = errors.New("mismatching versions")
-	ErrInvalidOffset       = errors.New("invalid offset")
+	ErrInvalidVersion      = errors.New("invalid version")
 	ErrLabelTooLong        = fmt.Errorf(
 		"label must not exceed %d bytes",
-		consts.MaxLabelLen,
+		internal.MaxLabelLen,
 	)
 	ErrLabelContainsIllegalChars = errors.New(
 		"label contains illegal characters",
@@ -127,42 +116,43 @@ var (
 )
 
 type EventLog struct {
-	impl      Implementer
+	impl      EventLogger
 	broadcast *broadcast.Broadcast
 }
 
-func New(impl Implementer) *EventLog {
+func New(impl EventLogger) *EventLog {
 	return &EventLog{
 		impl:      impl,
 		broadcast: broadcast.New(),
 	}
 }
 
-// Version returns the current version of the log
+// Version returns the latest version of the log.
 func (e *EventLog) Version() uint64 {
 	return e.impl.Version()
 }
 
-// FirstOffset returns the offset of the first entry in the log
-func (e *EventLog) FirstOffset() uint64 {
-	return e.impl.FirstOffset()
+// VersionInitial returns either the version of the first event in the log or
+// 0 if the log is empty.
+func (e *EventLog) VersionInitial() uint64 {
+	return e.impl.VersionInitial()
 }
 
-// MetadataLen returns the number of metadata fields
+// MetadataLen returns the number of metadata fields.
 func (e *EventLog) MetadataLen() int {
 	return e.impl.MetadataLen()
 }
 
 // ScanMetadata iterates over all metadata fields calling fn for each.
-// The scan is interrupted if fn returns false
+// The scan is interrupted if fn returns false.
 func (e *EventLog) ScanMetadata(fn func(field, value string) bool) {
 	e.impl.ScanMetadata(fn)
 }
 
-// Append appends an event with the given payload to the log
-func (e *EventLog) Append(event Event) (
-	offset uint64,
-	newVersion uint64,
+// Append appends an event with the given payload to the log.
+func (e *EventLog) Append(event EventData) (
+	versionPrevious uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
@@ -171,21 +161,19 @@ func (e *EventLog) Append(event Event) (
 	}
 	event.PayloadJSON = jsonminify.Minify(event.PayloadJSON)
 
-	if offset, newVersion, tm, err = e.impl.Append(event); err != nil {
-		offset = 0
-		newVersion = 0
-		tm = time.Time{}
+	if versionPrevious, version, tm, err = e.impl.Append(event); err != nil {
 		return
 	}
 
-	e.broadcast.Broadcast(newVersion)
+	e.broadcast.Broadcast(version)
 	return
 }
 
-// AppendMulti appends multiple events with the given payloads to the log
-func (e *EventLog) AppendMulti(events ...Event) (
-	offset uint64,
-	newVersion uint64,
+// AppendMulti appends multiple events with the given payloads to the log.
+func (e *EventLog) AppendMulti(events ...EventData) (
+	versionPrevious uint64,
+	versionFirst uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
@@ -198,28 +186,23 @@ func (e *EventLog) AppendMulti(events ...Event) (
 		events[i].PayloadJSON = jsonminify.Minify(events[i].PayloadJSON)
 	}
 
-	if offset, newVersion, tm, err = e.impl.AppendMulti(events...); err != nil {
-		offset = 0
-		newVersion = 0
-		tm = time.Time{}
+	if versionPrevious, versionFirst, version, tm, err =
+		e.impl.AppendMulti(events...); err != nil {
 		return
 	}
 
-	e.broadcast.Broadcast(newVersion)
+	e.broadcast.Broadcast(version)
 	return
 }
 
 // AppendCheck appends an event with the given payload
-// only if the offset matches the offset of the last
-// entry in the log minus 1. If the offset doesn't match
-// the log's version it will be rejected and ErrMismatchingVersions
-// is returned instead
+// only if assumedVersion matches the latest version of the log,
+// otherwise the event is rejected and ErrMismatchingVersions is returned.
 func (e *EventLog) AppendCheck(
 	assumedVersion uint64,
-	event Event,
+	event EventData,
 ) (
-	offset uint64,
-	newVersion uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
@@ -228,31 +211,26 @@ func (e *EventLog) AppendCheck(
 	}
 	event.PayloadJSON = jsonminify.Minify(event.PayloadJSON)
 
-	if offset, newVersion, tm, err = e.impl.AppendCheck(
+	if version, tm, err = e.impl.AppendCheck(
 		assumedVersion,
 		event,
 	); err != nil {
-		offset = 0
-		newVersion = 0
-		tm = time.Time{}
 		return
 	}
 
-	e.broadcast.Broadcast(newVersion)
+	e.broadcast.Broadcast(version)
 	return
 }
 
 // AppendCheckMulti appends multiple events with the given payloads
-// only if the offset matches the offset of the last
-// entry in the log minus 1. If the offset doesn't match
-// the log's version it will be rejected and ErrMismatchingVersions
-// is returned instead
+// only if assumedVersion matches the latest version of the log,
+// otherwise the events are rejected and ErrMismatchingVersions is returned.
 func (e *EventLog) AppendCheckMulti(
 	assumedVersion uint64,
-	events ...Event,
+	events ...EventData,
 ) (
-	offset uint64,
-	newVersion uint64,
+	versionFirst uint64,
+	version uint64,
 	tm time.Time,
 	err error,
 ) {
@@ -265,37 +243,29 @@ func (e *EventLog) AppendCheckMulti(
 		events[i].PayloadJSON = jsonminify.Minify(events[i].PayloadJSON)
 	}
 
-	if offset, newVersion, tm, err = e.impl.AppendCheckMulti(
-		assumedVersion,
-		events...,
+	if versionFirst, version, tm, err = e.impl.AppendCheckMulti(
+		assumedVersion, events...,
 	); err != nil {
-		offset = 0
-		newVersion = 0
-		tm = time.Time{}
 		return
 	}
 
-	e.broadcast.Broadcast(newVersion)
+	e.broadcast.Broadcast(version)
 	return
 }
 
-// Scan reads n events at the given offset
-// calling the given callback function for each read entry.
-// The scan is resumed as long as there are events to be read
-// and the callback function returns true.
-// If the returned nextOffset is 0 then there are no more
-// entries to be scanned after the last scanned one
-func (e *EventLog) Scan(
-	offset uint64,
-	n uint64,
-	fn ScanFn,
-) (
-	nextOffset uint64,
-	err error,
-) {
-	return e.impl.Scan(offset, n, fn)
+// Scan reads events starting at the given version.
+// Events are read in reversed order if reverse == true.
+// fn is called for every scanned event.
+//
+// WARNING: Calling Append, AppendMulti, AppendCheck, AppendCheckMulti
+// and Close in fn will cause a deadlock!
+func (e *EventLog) Scan(version uint64, reverse bool, fn ScanFn) error {
+	return e.impl.Scan(version, reverse, fn)
 }
 
+// Close closes the eventlog.
+//
+// WARNING: The eventlog instance must not be used after close.
 func (e *EventLog) Close() error {
 	if err := e.impl.Close(); err != nil {
 		return err
@@ -304,7 +274,7 @@ func (e *EventLog) Close() error {
 }
 
 // Subscribe creates an update subscription returning
-// a channel that's triggered when a push is performed successfully
+// a channel that's triggered when a push is performed successfully.
 func (e *EventLog) Subscribe() (channel <-chan uint64, close func()) {
 	c := make(chan uint64)
 	return c, e.broadcast.Subscribe(c)

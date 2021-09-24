@@ -8,13 +8,12 @@ import (
 
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/internal/hex"
-	"github.com/romshark/eventlog/internal/msgcodec"
 )
 
-type Inmem struct {
-	e *eventlog.EventLog
-}
+// Inmem is an in-memory eventlog connecter.
+type Inmem struct{ e *eventlog.EventLog }
 
+// NewInmem create a new in-memory eventlog connecter.
 func NewInmem(e *eventlog.EventLog) *Inmem {
 	return &Inmem{e}
 }
@@ -38,111 +37,134 @@ func (c *Inmem) Metadata(ctx context.Context) (
 	return m, nil
 }
 
-func (c *Inmem) Append(
-	ctx context.Context,
-	assumeVersion bool,
-	assumedVersion string,
-	eventsEncoded []byte,
-) (
-	offset string,
-	newVersion string,
+// Append implements Connecter.Append.
+func (c *Inmem) Append(ctx context.Context, event EventData) (
+	versionPrevious Version,
+	version Version,
 	tm time.Time,
 	err error,
 ) {
-	var events []eventlog.Event
-	if err = msgcodec.ScanBytesBinary(
-		eventsEncoded,
-		func(n int) error {
-			events = make([]eventlog.Event, 0, n)
-			return nil
-		},
-		func(label []byte, payloadJSON []byte) error {
-			events = append(events, eventlog.Event{
-				Label:       string(label),
-				PayloadJSON: payloadJSON,
-			})
-			return nil
-		},
-	); err != nil {
-		if err == msgcodec.ErrMalformedMessage {
-			err = ErrInvalidPayload
-		}
-		return
-	}
-
-	var of, nv uint64
-	if assumeVersion {
-		var av uint64
-		av, err = hex.ReadUint64(unsafeS2B(assumedVersion))
-		if err != nil {
-			return
-		}
-
-		if len(events) < 2 {
-			of, nv, tm, err = c.e.AppendCheck(av, events[0])
-		} else {
-			of, nv, tm, err = c.e.AppendCheckMulti(av, events...)
-		}
-	} else {
-		if len(events) < 2 {
-			of, nv, tm, err = c.e.Append(events[0])
-		} else {
-			of, nv, tm, err = c.e.AppendMulti(events...)
-		}
-	}
+	pv, v, tm, err := c.e.Append(event)
 	if err != nil {
 		return
 	}
-
-	offset = fmt.Sprintf("%x", of)
-	newVersion = fmt.Sprintf("%x", nv)
+	versionPrevious = fmt.Sprintf("%x", pv)
+	version = fmt.Sprintf("%x", v)
 	return
 }
 
-// Read implements Client.Read
-func (c *Inmem) Read(
+// AppendMulti implements Connecter.AppendMulti.
+func (c *Inmem) AppendMulti(ctx context.Context, events ...EventData) (
+	versionPrevious Version,
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	pv, fv, v, tm, err := c.e.AppendMulti(events...)
+	if err != nil {
+		return
+	}
+	versionPrevious = fmt.Sprintf("%x", pv)
+	versionFirst = fmt.Sprintf("%x", fv)
+	version = fmt.Sprintf("%x", v)
+	return
+}
+
+// AppendCheck implements Connecter.AppendCheck.
+func (c *Inmem) AppendCheck(
 	ctx context.Context,
-	offset string,
-) (Event, error) {
-	var e Event
-	of, err := hex.ReadUint64(unsafeS2B(offset))
+	assumedVersion Version,
+	event EventData,
+) (
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var av uint64
+	av, err = hex.ReadUint64(unsafeS2B(assumedVersion))
 	if err != nil {
-		return Event{}, err
+		return
+	}
+	v, tm, err := c.e.AppendCheck(av, event)
+	if err != nil {
+		return
+	}
+	version = fmt.Sprintf("%x", v)
+	return
+}
+
+// AppendCheckMulti implements Connecter.AppendCheckMulti.
+func (c *Inmem) AppendCheckMulti(
+	ctx context.Context,
+	assumedVersion Version,
+	events ...EventData,
+) (
+	versionFirst Version,
+	version Version,
+	tm time.Time,
+	err error,
+) {
+	var av uint64
+	av, err = hex.ReadUint64(unsafeS2B(assumedVersion))
+	if err != nil {
+		return
+	}
+	fv, v, tm, err := c.e.AppendCheckMulti(av, events...)
+	if err != nil {
+		return
+	}
+	versionFirst = fmt.Sprintf("%x", fv)
+	version = fmt.Sprintf("%x", v)
+	return
+}
+
+// Scan implements Connecter.Scan.
+func (c *Inmem) Scan(
+	ctx context.Context,
+	version Version,
+	reverse bool,
+	fn func(Event) error,
+) error {
+	v, err := hex.ReadUint64(unsafeS2B(version))
+	if err != nil {
+		return ErrMalformedVersion
 	}
 
-	next, err := c.e.Scan(of, 1, func(
-		offset uint64,
-		timestamp uint64,
-		label []byte,
-		payloadJSON []byte,
-	) error {
-		p := make([]byte, len(payloadJSON))
-		copy(p, payloadJSON)
+	return c.e.Scan(v, reverse, func(v eventlog.Event) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
-		e.Offset = fmt.Sprintf("%x", offset)
-		e.Time = time.Unix(int64(timestamp), 0)
-		e.Payload = p
-		return nil
+		var d EventData
+
+		d.PayloadJSON = make([]byte, len(v.PayloadJSON))
+		copy(d.PayloadJSON, v.PayloadJSON)
+
+		d.Label = make([]byte, len(v.Label))
+		copy(d.Label, v.Label)
+
+		return fn(Event{
+			Time:            time.Unix(int64(v.Timestamp), 0).UTC(),
+			Version:         fmt.Sprintf("%x", v.Version),
+			VersionPrevious: fmt.Sprintf("%x", v.VersionPrevious),
+			VersionNext:     fmt.Sprintf("%x", v.VersionNext),
+			EventData:       d,
+		})
 	})
-	if err != nil {
-		return Event{}, err
-	}
-	e.Next = fmt.Sprintf("%x", next)
-	return e, nil
 }
 
-// Begin implements Client.Begin
-func (c *Inmem) Begin(ctx context.Context) (string, error) {
-	return fmt.Sprintf("%x", c.e.FirstOffset()), nil
+// VersionInitial implements Connecter.VersionInitial.
+func (c *Inmem) VersionInitial(ctx context.Context) (Version, error) {
+	return fmt.Sprintf("%x", c.e.VersionInitial()), nil
 }
 
-func (c *Inmem) Version(ctx context.Context) (string, error) {
+// Version implements Connecter.Version.
+func (c *Inmem) Version(ctx context.Context) (Version, error) {
 	return fmt.Sprintf("%x", c.e.Version()), nil
 }
 
-// Listen establishes a websocket connection to the server
-// and starts listening for version update notifications
-// calling onUpdate when one is received.
+// Listen implements Connecter.Listen.
 func (c *Inmem) Listen(ctx context.Context, onUpdate func([]byte)) error {
 	ch, cancel := c.e.Subscribe()
 	done := make(chan struct{})

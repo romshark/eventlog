@@ -1,9 +1,9 @@
 package eventlog
 
-import "github.com/romshark/eventlog/internal/consts"
+import "github.com/romshark/eventlog/internal"
 
-func ValidateLabel(label string) error {
-	if len(label) > consts.MaxLabelLen {
+func ValidateLabel(label []byte) error {
+	if len(label) > internal.MaxLabelLen {
 		return ErrLabelTooLong
 	}
 	for _, c := range label {

@@ -1,34 +1,22 @@
 package file
 
 import (
-	"context"
 	"fmt"
 	"io"
 
-	"github.com/cespare/xxhash"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/file/internal"
+
+	xxhash "github.com/cespare/xxhash/v2"
 )
 
-type OffsetReader = internal.OffsetReader
-type ReadBuffer = internal.ReadBuffer
-
-const MinReadBufferLen = MaxLabelLen + MaxPayloadLen
+const MinReadBufferLen = MaxLabelLen + MaxPayloadLen + 8
 
 func CheckIntegrity(
-	ctx context.Context,
-	buffer ReadBuffer,
-	reader OffsetReader,
-	onEntry func(
-		offset int64,
-		checksum uint64,
-		timestamp uint64,
-		label []byte,
-		payloadJSON []byte,
-	) error,
+	buffer internal.ReadBuffer,
+	reader internal.OffsetLenReader,
+	onEntry func(checksum uint64, event eventlog.Event) error,
 ) error {
-	buffer.MustValidate(readConfig)
-
 	hash := xxhash.New()
 
 	headerLen, err := internal.ReadHeader(
@@ -46,48 +34,60 @@ func CheckIntegrity(
 	}
 
 	var previousTime uint64
+	var versionPrevious uint64
+
+	makeErr := func(offset int64, format string, v ...interface{}) error {
+		return fmt.Errorf(
+			fmt.Sprintf("error at offset %d: ", offset)+format,
+			v...,
+		)
+	}
 
 	for i := int64(headerLen); ; {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		checksum, timestamp, label, payload, n, err := internal.ReadEvent(
-			buffer, reader, hash, i, readConfig,
-		)
+		checksum, event, n, err :=
+			internal.ReadEvent(buffer, reader, hash, i, readConfig)
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			return fmt.Errorf("reading entry at offset %d: %w", i, err)
+			return makeErr(i, "reading entry: %w", err)
 		}
 
-		if timestamp < previousTime {
-			return fmt.Errorf(
-				"invalid timestamp (%d) at offset %d"+
-					" greater than previous (%d)",
-				timestamp, i, previousTime,
+		if event.Timestamp < previousTime {
+			return makeErr(
+				i, "invalid timestamp (%d) greater than previous (%d)",
+				event.Timestamp, previousTime,
 			)
 		}
-		previousTime = timestamp
+		previousTime = event.Timestamp
 
-		e := eventlog.Event{
-			Label:       string(label),
-			PayloadJSON: payload,
-		}
-		if err := e.Validate(); err != nil {
-			return fmt.Errorf("invalid payload at offset %d: %w", i, err)
+		if err := (eventlog.EventData{
+			Label:       event.Label,
+			PayloadJSON: event.PayloadJSON,
+		}).Validate(); err != nil {
+			return makeErr(i, "invalid payload: %w", err)
 		}
 
-		if err := onEntry(
-			i,
-			checksum,
-			timestamp,
-			label,
-			payload,
-		); err != nil {
+		i += int64(n)
+
+		ln, err := reader.Len()
+		if err != nil {
+			return makeErr(i-int64(n), "reading source length: %w", err)
+		}
+		if uint64(i) < ln {
+			event.VersionNext = uint64(i)
+		}
+
+		if event.VersionPrevious != versionPrevious {
+			return makeErr(i-int64(n),
+				"invalid previous version (%d), expected %d",
+				event.VersionPrevious, versionPrevious,
+			)
+		}
+		versionPrevious = event.Version
+
+		if err := onEntry(checksum, event); err != nil {
 			return err
 		}
-		i += int64(n)
 	}
 
 	return nil

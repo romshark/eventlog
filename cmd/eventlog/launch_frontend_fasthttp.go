@@ -5,21 +5,21 @@ import (
 	"os"
 	"os/signal"
 
+	apifasthttp "github.com/romshark/eventlog/api/fasthttp"
 	"github.com/romshark/eventlog/cmd/eventlog/cli"
 	"github.com/romshark/eventlog/eventlog"
-	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
 
 	"github.com/valyala/fasthttp"
 )
 
-func launchFrontendFastHTTP(
+func launchAPIFastHTTP(
 	logInfo *log.Logger,
 	logErr *log.Logger,
 	eventlog *eventlog.EventLog,
 	http cli.HTTP,
 ) {
-	// Initialize the frontend
-	server := ffhttp.New(logErr, eventlog)
+	// Initialize the API server
+	server := apifasthttp.New(logErr, eventlog, int(http.MaxScanBatchSize))
 	httpServer := &fasthttp.Server{
 		Handler:     server.Serve,
 		ReadTimeout: http.ReadTimeout,

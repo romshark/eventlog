@@ -7,24 +7,26 @@ import (
 	"os"
 	"testing"
 
+	apifasthttp "github.com/romshark/eventlog/api/fasthttp"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/inmem"
-	ffhttp "github.com/romshark/eventlog/frontend/fasthttp"
+	"github.com/romshark/eventlog/internal"
+
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
 )
 
-func TestAppendCheckInvalidVersion(t *testing.T) {
+func TestAppendCheckMalformedVersion(t *testing.T) {
 	s := setup(t)
 	r := require.New(t)
 
 	resp := request(t, s, func(req *fasthttp.Request) {
-		req.URI().SetPath("/log/invalid")
+		req.URI().SetPath("/log/malformed")
 	})
 
 	r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
-	r.Equal("ErrInvalidOffset", string(resp.Body()))
+	r.Equal(internal.StatusMsgErrMalformedVersion, string(resp.Body()))
 }
 
 func TestAppendInvalidPayload(t *testing.T) {
@@ -46,12 +48,12 @@ func TestAppendInvalidPayload(t *testing.T) {
 			resp := request(t, s, func(req *fasthttp.Request) {
 				// Append check
 				req.Header.SetMethod("POST")
-				req.URI().SetPath(fmt.Sprintf("/log/%x", s.DB.FirstOffset()))
+				req.URI().SetPath(fmt.Sprintf("/log/%x", s.DB.VersionInitial()))
 				req.SetBodyString(t1.payload)
 			})
 
 			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
-			r.Equal("ErrInvalidPayload", string(resp.Body()))
+			r.Equal(internal.StatusMsgErrInvalidPayload, string(resp.Body()))
 		})
 
 		t.Run(t1.name, func(t *testing.T) {
@@ -66,7 +68,7 @@ func TestAppendInvalidPayload(t *testing.T) {
 			})
 
 			r.Equal(fasthttp.StatusBadRequest, resp.StatusCode())
-			r.Equal("ErrInvalidPayload", string(resp.Body()))
+			r.Equal(internal.StatusMsgErrInvalidPayload, string(resp.Body()))
 		})
 	}
 }
@@ -109,9 +111,10 @@ func setup(t *testing.T) (s Setup) {
 	})
 
 	s.Server = &fasthttp.Server{
-		Handler: ffhttp.New(
+		Handler: apifasthttp.New(
 			log.New(os.Stderr, "ERR", log.LstdFlags),
 			s.DB,
+			10,
 		).Serve,
 	}
 
@@ -125,4 +128,20 @@ func setup(t *testing.T) (s Setup) {
 		},
 	}
 	return
+}
+
+func TestAdjustBatchSize(t *testing.T) {
+	const NoLimit = 0
+	for _, tt := range []struct{ requested, limit, expected int }{
+		{requested: NoLimit, limit: NoLimit, expected: NoLimit},
+		{requested: NoLimit, limit: 5, expected: 5},
+		{requested: 5, limit: NoLimit, expected: 5},
+		{requested: 5, limit: 3, expected: 3},
+		{requested: 5, limit: 5, expected: 5},
+	} {
+		t.Run("", func(t *testing.T) {
+			a := apifasthttp.AdjustBatchSize(tt.requested, tt.limit)
+			require.Equal(t, tt.expected, a)
+		})
+	}
 }
