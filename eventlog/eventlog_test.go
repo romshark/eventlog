@@ -236,8 +236,7 @@ func TestAppendInvalidPayload(t *testing.T) {
 					require.Error(t, err)
 					require.True(t,
 						errors.Is(err, eventlog.ErrInvalidPayload),
-						"unexpected error: %s",
-						err,
+						"unexpected error: (%T) %s", err, err.Error(),
 					)
 					require.Zero(t, pv)
 					require.Zero(t, v)
@@ -268,8 +267,7 @@ func TestAppendInvalidLabel(t *testing.T) {
 				require.Error(t, err)
 				require.True(t,
 					errors.Is(err, eventlog.ErrLabelContainsIllegalChars),
-					"unexpected error: %s",
-					err,
+					"unexpected error: (%T) %s", err, err.Error(),
 				)
 				require.Zero(t, pv)
 				require.Zero(t, v)
@@ -301,8 +299,7 @@ func TestAppendVersionMismatch(t *testing.T) {
 		require.True(
 			t,
 			errors.Is(err, eventlog.ErrMismatchingVersions),
-			"unexpected error: %s",
-			err,
+			"unexpected error: (%T) %s", err, err.Error(),
 		)
 		require.Zero(t, v2)
 		require.Zero(t, tm)
@@ -329,8 +326,7 @@ func TestScanEmptyLog(t *testing.T) {
 			require.True(
 				t,
 				errors.Is(err, eventlog.ErrInvalidVersion),
-				"unexpected error: %s",
-				err,
+				"unexpected error: (%T) %s", err, err.Error(),
 			)
 			require.Len(t, events, 0)
 		}
@@ -363,8 +359,7 @@ func TestScanVersionOutOfBound(t *testing.T) {
 		require.True(
 			t,
 			errors.Is(err, eventlog.ErrInvalidVersion),
-			"unexpected error: %s",
-			err,
+			"unexpected error: (%T) %s", err, err.Error(),
 		)
 
 		require.Len(t, events, 0)
