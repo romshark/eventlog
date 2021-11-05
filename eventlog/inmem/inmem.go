@@ -17,12 +17,15 @@ type inmemEvent struct {
 }
 
 func newInmemEvent(event eventlog.EventData, tm time.Time) inmemEvent {
+	l := make([]byte, len(event.Label))
+	copy(l, event.Label)
+
 	p := make([]byte, len(event.PayloadJSON))
 	copy(p, event.PayloadJSON)
 
 	return inmemEvent{
 		Timestamp: uint64(tm.UTC().Unix()),
-		Label:     []byte(event.Label),
+		Label:     l,
 		Payload:   p,
 	}
 }
