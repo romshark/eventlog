@@ -377,6 +377,8 @@ func (s *Server) handleSubscription(ctx *fasthttp.RequestCtx) error {
 
 		pingTicker := time.NewTicker(s.wsPingInterval)
 		closed := uint32(0)
+
+		// closeConn is expected to be called while s.lock is locked!
 		closeConn := func() {
 			if !atomic.CompareAndSwapUint32(&closed, 0, 1) {
 				// Already closed
@@ -386,9 +388,7 @@ func (s *Server) handleSubscription(ctx *fasthttp.RequestCtx) error {
 			pingTicker.Stop()
 			conn.Close()
 
-			s.lock.Lock()
 			delete(s.wsConns, conn)
-			s.lock.Unlock()
 		}
 		write := func(msgType int, msg []byte) error {
 			if err := conn.SetWriteDeadline(
@@ -399,7 +399,11 @@ func (s *Server) handleSubscription(ctx *fasthttp.RequestCtx) error {
 			return conn.WriteMessage(msgType, msg)
 		}
 
-		defer closeConn()
+		defer func() {
+			s.lock.Lock()
+			defer s.lock.Unlock()
+			closeConn()
+		}()
 
 		s.lock.Lock()
 		s.wsConns[conn] = closeConn
@@ -448,7 +452,6 @@ func (s *Server) handleSubscription(ctx *fasthttp.RequestCtx) error {
 			)
 		}
 		_, _, _ = conn.NextReader()
-		closeConn()
 	})
 }
 
