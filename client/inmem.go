@@ -10,6 +10,9 @@ import (
 	"github.com/romshark/eventlog/internal/hex"
 )
 
+// Make sure *Inmem implements the ReadWriter
+var _ ReadWriter = new(Inmem)
+
 // Inmem is an in-memory eventlog connecter.
 type Inmem struct{ e *eventlog.EventLog }
 
@@ -165,7 +168,7 @@ func (c *Inmem) Version(ctx context.Context) (Version, error) {
 }
 
 // Listen implements Connecter.Listen.
-func (c *Inmem) Listen(ctx context.Context, onUpdate func([]byte)) error {
+func (c *Inmem) Listen(ctx context.Context, onUpdate func(Version)) error {
 	ch, cancel := c.e.Subscribe()
 	done := make(chan struct{})
 	defer func() {
@@ -182,7 +185,7 @@ func (c *Inmem) Listen(ctx context.Context, onUpdate func([]byte)) error {
 	}()
 
 	for v := range ch {
-		onUpdate([]byte(fmt.Sprintf("%x", v)))
+		onUpdate(Version(fmt.Sprintf("%x", v)))
 	}
 	return ctx.Err()
 }

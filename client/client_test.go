@@ -534,7 +534,7 @@ func TestListen(t *testing.T) {
 
 		versionChan1 := make(chan client.Version, 1)
 		go func() {
-			if err := s.Client.Listen(context.Background(), func(v []byte) {
+			if err := s.Client.Listen(context.Background(), func(v client.Version) {
 				versionChan1 <- client.Version(v)
 			}); err != nil {
 				panic(err)
@@ -543,7 +543,7 @@ func TestListen(t *testing.T) {
 
 		versionChan2 := make(chan client.Version, 1)
 		go func() {
-			if err := s.Client.Listen(context.Background(), func(v []byte) {
+			if err := s.Client.Listen(context.Background(), func(v client.Version) {
 				versionChan2 <- client.Version(v)
 			}); err != nil {
 				panic(err)
@@ -582,7 +582,7 @@ func TestListenCancel(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		go func() {
-			chanErr <- s.Client.Listen(ctx, func(v []byte) {
+			chanErr <- s.Client.Listen(ctx, func(v client.Version) {
 				atomic.AddUint32(&versionTriggered, 1)
 			})
 		}()

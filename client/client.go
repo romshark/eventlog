@@ -23,11 +23,11 @@ type Event struct {
 type EventData = eventlog.EventData
 
 type Client struct {
-	impl Connecter
+	impl ReadWriter
 }
 
 // New creates a new eventlog client.
-func New(impl Connecter) *Client {
+func New(impl ReadWriter) *Client {
 	return &Client{
 		impl: impl,
 	}
@@ -139,7 +139,7 @@ func (c *Client) Version(ctx context.Context) (Version, error) {
 // Listen establishes a websocket connection to the server
 // and starts listening for version update notifications
 // calling onUpdate when one is received.
-func (c *Client) Listen(ctx context.Context, onUpdate func([]byte)) error {
+func (c *Client) Listen(ctx context.Context, onUpdate func(Version)) error {
 	return c.impl.Listen(ctx, onUpdate)
 }
 
@@ -260,10 +260,33 @@ type Log interface {
 	Printf(format string, v ...interface{})
 }
 
-// Connecter represents an eventlog connecter.
-type Connecter interface {
+// ReadWriter is both an eventlog reader and a writer.
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+// Reader is an eventlog reader.
+// All reader methods are idempotent.
+type Reader interface {
 	Metadata(ctx context.Context) (map[string]string, error)
 
+	Scan(
+		ctx context.Context,
+		version Version,
+		reverse bool,
+		fn func(Event) error,
+	) error
+
+	VersionInitial(context.Context) (Version, error)
+
+	Version(context.Context) (Version, error)
+
+	Listen(ctx context.Context, onUpdate func(Version)) error
+}
+
+// Writer is an eventlog writer.
+type Writer interface {
 	Append(
 		ctx context.Context,
 		event EventData,
@@ -305,17 +328,4 @@ type Connecter interface {
 		tm time.Time,
 		err error,
 	)
-
-	Scan(
-		ctx context.Context,
-		version Version,
-		reverse bool,
-		fn func(Event) error,
-	) error
-
-	VersionInitial(context.Context) (Version, error)
-
-	Version(context.Context) (Version, error)
-
-	Listen(ctx context.Context, onUpdate func([]byte)) error
 }

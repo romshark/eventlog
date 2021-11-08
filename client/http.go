@@ -26,8 +26,8 @@ const (
 	pathVersionInitial = "version/initial"
 )
 
-// Make sure *HTTP implements Client
-var _ Connecter = new(HTTP)
+// Make sure *HTTP implements the ReadWriter
+var _ ReadWriter = new(HTTP)
 
 // HTTP is an HTTP eventlog connecter.
 type HTTP struct {
@@ -535,7 +535,7 @@ func (c *HTTP) Version(ctx context.Context) (version Version, err error) {
 // Listen establishes a websocket connection to the server
 // and starts listening for version update notifications
 // calling onUpdate when one is received.
-func (c *HTTP) Listen(ctx context.Context, onUpdate func([]byte)) error {
+func (c *HTTP) Listen(ctx context.Context, onUpdate func(Version)) error {
 	u := url.URL{
 		Scheme: "ws",
 		Host:   c.host,
@@ -594,7 +594,7 @@ func (c *HTTP) Listen(ctx context.Context, onUpdate func([]byte)) error {
 		case n > 16:
 			return fmt.Errorf("excessive message length (%d/16)", n)
 		}
-		onUpdate(buf[:n])
+		onUpdate(Version(buf[:n]))
 	}
 }
 
