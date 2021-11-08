@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sync/atomic"
@@ -31,10 +32,11 @@ var _ ReadWriter = new(HTTP)
 
 // HTTP is an HTTP eventlog connecter.
 type HTTP struct {
-	host     string
-	logErr   Log
-	clt      *fasthttp.Client
-	wsDialer *websocket.Dialer
+	host          string
+	logErr        Log
+	clt           *fasthttp.Client
+	wsDialer      *websocket.Dialer
+	retryInterval time.Duration
 }
 
 // NewHTTP creates a connecter connecting to an eventlog's HTTP API.
@@ -60,6 +62,18 @@ func NewHTTP(
 		clt:      clt,
 		wsDialer: wsDialer,
 	}
+}
+
+// GetRetryInterval returns the current retry interval.
+// Returns 0 if automatic retry is disabled.
+func (c *HTTP) GetRetryInterval() time.Duration {
+	return time.Duration(atomic.LoadInt64((*int64)(&c.retryInterval)))
+}
+
+// SetRetryInterval enables automatic retries if d > 0,
+// otherwise automatic retry is disabled.
+func (c *HTTP) SetRetryInterval(d time.Duration) {
+	atomic.StoreInt64((*int64)(&c.retryInterval), int64(d))
 }
 
 // Metadata implements Connecter.Metadata.
@@ -113,14 +127,28 @@ func (c *HTTP) req(
 
 	req.SetHost(c.host)
 	prepare(req)
-	if d, ok := ctx.Deadline(); ok {
-		err = c.clt.DoDeadline(req, resp, d)
-	} else {
-		err = c.clt.Do(req, resp)
-	}
-	if err != nil {
-		err = fmt.Errorf("http request: %w", err)
-		return
+
+RETRY:
+	for {
+		if d, ok := ctx.Deadline(); ok {
+			err = c.clt.DoDeadline(req, resp, d)
+		} else {
+			err = c.clt.Do(req, resp)
+		}
+		if err == nil {
+			break RETRY
+		}
+
+		if ri := c.GetRetryInterval(); ri > 0 && isNetErrRecoverable(err) {
+			// Retry
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(ri):
+				continue RETRY
+			}
+		}
+		return fmt.Errorf("http request: %w", err)
 	}
 	return handle(resp)
 }
@@ -599,3 +627,14 @@ func (c *HTTP) Listen(ctx context.Context, onUpdate func(Version)) error {
 }
 
 var ErrSocketClosed = errors.New("socket closed")
+
+func isNetErrRecoverable(err error) bool {
+	switch v := err.(type) {
+	case *net.OpError:
+		// Connection refused
+		return v.Op == "dial" || v.Op == "read"
+	case net.Error:
+		return v.Temporary() || v.Timeout()
+	}
+	return false
+}
