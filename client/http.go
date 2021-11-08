@@ -564,6 +564,23 @@ func (c *HTTP) Version(ctx context.Context) (version Version, err error) {
 // and starts listening for version update notifications
 // calling onUpdate when one is received.
 func (c *HTTP) Listen(ctx context.Context, onUpdate func(Version)) error {
+	for {
+		err := c.listen(ctx, onUpdate)
+		if ri := c.GetRetryInterval(); ri > 0 &&
+			(isNetErrRecoverable(err) || err == ErrSocketClosed) {
+			// Retry
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(ri):
+				continue
+			}
+		}
+		return err
+	}
+}
+
+func (c *HTTP) listen(ctx context.Context, onUpdate func(Version)) error {
 	u := url.URL{
 		Scheme: "ws",
 		Host:   c.host,
