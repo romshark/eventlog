@@ -30,7 +30,7 @@ const (
 // Make sure *HTTP implements the ReadWriter
 var _ ReadWriter = new(HTTP)
 
-// HTTP is an HTTP eventlog connecter.
+// HTTP is an HTTP eventlog read-writer.
 type HTTP struct {
 	host          string
 	logErr        Log
@@ -39,7 +39,7 @@ type HTTP struct {
 	retryInterval time.Duration
 }
 
-// NewHTTP creates a connecter connecting to an eventlog's HTTP API.
+// NewHTTP creates a read-writer connecting to an eventlog's HTTP API.
 func NewHTTP(
 	host string,
 	logErr Log,
@@ -76,7 +76,7 @@ func (c *HTTP) SetRetryInterval(d time.Duration) {
 	atomic.StoreInt64((*int64)(&c.retryInterval), int64(d))
 }
 
-// Metadata implements Connecter.Metadata.
+// Metadata implements Reader.Metadata.
 func (c *HTTP) Metadata(ctx context.Context) (map[string]string, error) {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -153,7 +153,7 @@ RETRY:
 	return handle(resp)
 }
 
-// Append implements Connecter.Append.
+// Append implements Writer.Append.
 func (c *HTTP) Append(
 	ctx context.Context,
 	event EventData,
@@ -214,7 +214,7 @@ func (c *HTTP) Append(
 	return
 }
 
-// AppendMulti implements Connecter.AppendMulti.
+// AppendMulti implements Writer.AppendMulti.
 func (c *HTTP) AppendMulti(
 	ctx context.Context,
 	events ...EventData,
@@ -278,7 +278,7 @@ func (c *HTTP) AppendMulti(
 	return
 }
 
-// AppendCheck implements Connecter.AppendCheck.
+// AppendCheck implements Writer.AppendCheck.
 func (c *HTTP) AppendCheck(
 	ctx context.Context,
 	assumedVersion Version,
@@ -337,7 +337,7 @@ func (c *HTTP) AppendCheck(
 	return
 }
 
-// AppendCheckMulti implements Connecter.AppendCheckMulti.
+// AppendCheckMulti implements Writer.AppendCheckMulti.
 func (c *HTTP) AppendCheckMulti(
 	ctx context.Context,
 	assumedVersion Version,
@@ -399,7 +399,7 @@ func (c *HTTP) AppendCheckMulti(
 	return
 }
 
-// Scan implements Connecter.Scan.
+// Scan implements Reader.Scan.
 //
 // WARNING: manually cancelable (non-timeout and non-deadline) contexts
 // are not supported.
@@ -489,7 +489,7 @@ func (c *HTTP) Scan(
 
 var errAbortScan = errors.New("as")
 
-// VersionInitial implements Connecter.VersionInitial.
+// VersionInitial implements Reader.VersionInitial.
 func (c *HTTP) VersionInitial(
 	ctx context.Context,
 ) (version Version, err error) {
@@ -528,7 +528,7 @@ func (c *HTTP) VersionInitial(
 	return
 }
 
-// Version implements Connecter.Version.
+// Version implements Reader.Version.
 func (c *HTTP) Version(ctx context.Context) (version Version, err error) {
 	err = c.req(
 		ctx,
