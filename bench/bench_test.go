@@ -170,6 +170,7 @@ func BenchmarkFileHTTP_Read_1K(b *testing.B) {
 			context.Background(),
 			version,
 			false,
+			false,
 			func(e client.Event) error {
 				counter++
 				return nil

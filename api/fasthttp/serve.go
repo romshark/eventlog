@@ -199,16 +199,8 @@ func (s *Server) handleScan(ctx *fasthttp.RequestCtx) error {
 	}
 	n = AdjustBatchSize(n, s.maxReadBatchSize)
 
-	reverse := false
-	if a := ctx.QueryArgs().Peek("reverse"); a != nil {
-		if string(a) != "true" {
-			ctx.ResetBody()
-			ctx.SetStatusCode(fasthttp.StatusBadRequest)
-			ctx.SetBodyString(internal.StatusMsgErrBadArgument)
-			return nil
-		}
-		reverse = true
-	}
+	reverse := ctx.QueryArgs().Has("reverse")
+	skipFirst := ctx.QueryArgs().Has("skip_first")
 
 	_, _ = ctx.WriteString(`[`)
 
@@ -217,6 +209,11 @@ func (s *Server) handleScan(ctx *fasthttp.RequestCtx) error {
 		version,
 		reverse,
 		func(e eventlog.Event) error {
+			if skipFirst {
+				skipFirst = false
+				return nil
+			}
+
 			_, _ = ctx.WriteString(`{"time":"`)
 			buf = time.Unix(int64(e.Timestamp), 0).
 				AppendFormat(buf, time.RFC3339)
@@ -243,12 +240,12 @@ func (s *Server) handleScan(ctx *fasthttp.RequestCtx) error {
 			if reverse && e.VersionPrevious == 0 ||
 				!reverse && e.VersionNext == 0 ||
 				n > 0 && i >= n {
-				return errAbortScan
+				return errScanStopped
 			}
 			_, _ = ctx.WriteString(`,`)
 			return nil
 		},
-	); err == errAbortScan {
+	); err == errScanStopped {
 		// Ignore
 	} else if errors.Is(err, eventlog.ErrInvalidVersion) {
 		ctx.ResetBody()
@@ -267,7 +264,7 @@ func (s *Server) handleScan(ctx *fasthttp.RequestCtx) error {
 	return nil
 }
 
-var errAbortScan = errors.New("as")
+var errScanStopped = errors.New("scan stopped")
 
 // handleAppend handles both append and check-append requests
 func handleAppend(

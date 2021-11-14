@@ -407,8 +407,10 @@ func (c *HTTP) Scan(
 	ctx context.Context,
 	version Version,
 	reverse bool,
+	skipFirst bool,
 	fn func(Event) error,
 ) error {
+SCAN:
 	for {
 		if err := c.req(
 			ctx,
@@ -416,7 +418,10 @@ func (c *HTTP) Scan(
 				r.Header.SetMethod(methodGet)
 				r.URI().SetPath(pathLog + version)
 				if reverse {
-					r.URI().QueryArgs().Set("reverse", "true")
+					r.URI().QueryArgs().SetNoValue("reverse")
+				}
+				if skipFirst {
+					r.URI().QueryArgs().SetNoValue("skip_first")
 				}
 			},
 			func(r *fasthttp.Response) error {
@@ -467,7 +472,7 @@ func (c *HTTP) Scan(
 					}
 					if !reverse && e.VersionNext == "0" ||
 						reverse && e.VersionPrevious == "0" {
-						return errAbortScan
+						return errScanStopped
 					}
 				}
 
@@ -478,8 +483,8 @@ func (c *HTTP) Scan(
 				}
 				return nil
 			},
-		); err == errAbortScan {
-			break
+		); err == errScanStopped {
+			break SCAN
 		} else if err != nil {
 			return err
 		}
@@ -487,7 +492,7 @@ func (c *HTTP) Scan(
 	return nil
 }
 
-var errAbortScan = errors.New("as")
+var errScanStopped = errors.New("scan stopped")
 
 // VersionInitial implements Reader.VersionInitial.
 func (c *HTTP) VersionInitial(

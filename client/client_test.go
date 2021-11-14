@@ -350,35 +350,26 @@ func TestScan(t *testing.T) {
 			c1 := s.Logger.EXPECT().Scan(
 				uint64(1),
 				false,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.NoError(t, f(Translate(t, expEvents[0])))
-					require.Equal(
-						t, "as", f(Translate(t, expEvents[1])).Error(),
-					)
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[0], ExpectNoErr)
+					callScanCallback(t, f, expEvents[1], ExpectErr)
 				}),
 			).Times(1).Return(nil)
 
 			c2 := s.Logger.EXPECT().Scan(
 				uint64(3),
 				false,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.NoError(t, f(Translate(t, expEvents[2])))
-					require.Equal(
-						t, "as", f(Translate(t, expEvents[3])).Error(),
-					)
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[2], ExpectNoErr)
+					callScanCallback(t, f, expEvents[3], ExpectErr)
 				}),
 			).Times(1).Return(nil).After(c1)
 
 			s.Logger.EXPECT().Scan(
 				uint64(5),
 				false,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.Equal(
-						t, "as", f(Translate(t, expEvents[4])).Error(),
-					)
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[4], ExpectErr)
 				}),
 			).Times(1).Return(nil).After(c2)
 
@@ -386,13 +377,12 @@ func TestScan(t *testing.T) {
 			s.Logger.EXPECT().Scan(
 				uint64(1),
 				false,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.NoError(t, f(Translate(t, expEvents[0])))
-					require.NoError(t, f(Translate(t, expEvents[1])))
-					require.NoError(t, f(Translate(t, expEvents[2])))
-					require.NoError(t, f(Translate(t, expEvents[3])))
-					require.NoError(t, f(Translate(t, expEvents[4])))
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[0], ExpectNoErr)
+					callScanCallback(t, f, expEvents[1], ExpectNoErr)
+					callScanCallback(t, f, expEvents[2], ExpectNoErr)
+					callScanCallback(t, f, expEvents[3], ExpectNoErr)
+					callScanCallback(t, f, expEvents[4], ExpectNoErr)
 				}),
 			).Times(1).Return(nil)
 
@@ -404,6 +394,7 @@ func TestScan(t *testing.T) {
 		require.NoError(t, s.Client.Scan(
 			context.Background(),
 			"1",
+			false,
 			false,
 			func(e client.Event) error {
 				require.Equal(t, expEvents[i], e, "mismatch at %d", i)
@@ -455,23 +446,17 @@ func TestScanReverse(t *testing.T) {
 			c1 := s.Logger.EXPECT().Scan(
 				uint64(3),
 				true,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.NoError(t, f(Translate(t, expEvents[2])))
-					require.Equal(
-						t, "as", f(Translate(t, expEvents[1])).Error(),
-					)
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[2], ExpectNoErr)
+					callScanCallback(t, f, expEvents[1], ExpectErr)
 				}),
 			).Times(1).Return(nil)
 
 			s.Logger.EXPECT().Scan(
 				uint64(1),
 				true,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.Equal(
-						t, "as", f(Translate(t, expEvents[0])).Error(),
-					)
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[0], ExpectErr)
 				}),
 			).Times(1).Return(nil).After(c1)
 
@@ -479,11 +464,10 @@ func TestScanReverse(t *testing.T) {
 			s.Logger.EXPECT().Scan(
 				uint64(3),
 				true,
-				Callback(func(x interface{}) {
-					f := x.(eventlog.ScanFn)
-					require.NoError(t, f(Translate(t, expEvents[2])))
-					require.NoError(t, f(Translate(t, expEvents[1])))
-					require.NoError(t, f(Translate(t, expEvents[0])))
+				Callback(func(f interface{}) {
+					callScanCallback(t, f, expEvents[2], ExpectNoErr)
+					callScanCallback(t, f, expEvents[1], ExpectNoErr)
+					callScanCallback(t, f, expEvents[0], ExpectNoErr)
 				}),
 			).Times(1).Return(nil)
 
@@ -497,6 +481,7 @@ func TestScanReverse(t *testing.T) {
 			context.Background(),
 			"3",
 			true, // Reverse
+			false,
 			func(e client.Event) error {
 				require.Equal(t, expEvents[i], e, "mismatch at %d", i)
 				i--
@@ -505,6 +490,114 @@ func TestScanReverse(t *testing.T) {
 			},
 		))
 		require.Equal(t, len(expEvents), counter)
+	})
+}
+
+func TestScanSkipFirst(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		expEvents := []client.Event{{
+			Time:            time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			VersionPrevious: "0",
+			Version:         "1",
+			VersionNext:     "2",
+			EventData: eventlog.EventData{
+				Label:       []byte("first"),
+				PayloadJSON: []byte(`{"i":1}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 2, 1, 0, time.UTC),
+			VersionPrevious: "1",
+			Version:         "2",
+			VersionNext:     "0",
+			EventData: eventlog.EventData{
+				Label:       []byte("second"),
+				PayloadJSON: []byte(`{"i":2}`),
+			},
+		}}
+
+		s.Logger.EXPECT().Scan(
+			uint64(1),
+			false,
+			Callback(func(f interface{}) {
+				callScanCallback(t, f, expEvents[0], ExpectNoErr)
+				switch s.Name {
+				case "HTTP":
+					// The HTTP client will force-stop using an error
+					callScanCallback(t, f, expEvents[1], ExpectErr)
+				case "Inmem":
+					callScanCallback(t, f, expEvents[1], ExpectNoErr)
+				}
+			})).
+			Times(1).
+			Return(nil)
+
+		counter := 0
+		require.NoError(t, s.Client.Scan(
+			context.Background(),
+			"1",
+			false, // Reverse
+			true,  // Skip first
+			func(e client.Event) error {
+				require.Equal(t, expEvents[1], e)
+				counter++
+				return nil
+			},
+		))
+		require.Equal(t, 1, counter)
+	})
+}
+
+func TestScanReverseSkipFirst(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		expEvents := []client.Event{{
+			Time:            time.Date(2021, 1, 1, 1, 1, 1, 0, time.UTC),
+			VersionPrevious: "0",
+			Version:         "1",
+			VersionNext:     "2",
+			EventData: eventlog.EventData{
+				Label:       []byte("first"),
+				PayloadJSON: []byte(`{"i":1}`),
+			},
+		}, {
+			Time:            time.Date(2021, 1, 1, 1, 2, 1, 0, time.UTC),
+			VersionPrevious: "1",
+			Version:         "2",
+			VersionNext:     "0",
+			EventData: eventlog.EventData{
+				Label:       []byte("second"),
+				PayloadJSON: []byte(`{"i":2}`),
+			},
+		}}
+
+		s.Logger.EXPECT().Scan(
+			uint64(2),
+			true,
+			Callback(func(f interface{}) {
+				callScanCallback(t, f, expEvents[1], ExpectNoErr)
+				switch s.Name {
+				case "HTTP":
+					// The HTTP client will force-stop using an error
+					callScanCallback(t, f, expEvents[0], ExpectErr)
+				case "Inmem":
+					callScanCallback(t, f, expEvents[0], ExpectNoErr)
+				}
+			})).
+			Times(1).
+			Return(nil)
+
+		counter := 0
+		require.NoError(t, s.Client.Scan(
+			context.Background(),
+			"2",
+			true, // Reverse
+			true, // Skip first
+			func(e client.Event) error {
+				require.Equal(t, expEvents[0], e)
+				counter++
+				return nil
+			},
+		))
+		require.Equal(t, 1, counter)
 	})
 }
 
@@ -919,3 +1012,32 @@ func Translate(t *testing.T, from client.Event) (to eventlog.Event) {
 
 	return
 }
+
+// callScanCallback expects cb to be a eventlog.ScanFn function
+// calls it passing passEvent. If expectStopErr == true the scan-stop error
+// is expected to be returned, otherwise nil is expected.
+func callScanCallback(
+	t *testing.T,
+	cb interface{},
+	passEvent client.Event,
+	errExpectation expectedError,
+) {
+	t.Helper()
+	var cbType eventlog.ScanFn
+	require.IsType(t, cbType, cb)
+	f := cb.(eventlog.ScanFn)
+	if errExpectation == ExpectErr {
+		err := f(Translate(t, passEvent))
+		require.Error(t, err)
+		require.Equal(t, "scan stopped", err.Error())
+	} else {
+		require.NoError(t, f(Translate(t, passEvent)))
+	}
+}
+
+type expectedError bool
+
+const (
+	ExpectErr   expectedError = true
+	ExpectNoErr expectedError = false
+)

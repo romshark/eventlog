@@ -127,6 +127,7 @@ func (c *Inmem) Scan(
 	ctx context.Context,
 	version Version,
 	reverse bool,
+	skipFirst bool,
 	fn func(Event) error,
 ) error {
 	v, err := hex.ReadUint64(unsafeS2B(version))
@@ -135,6 +136,11 @@ func (c *Inmem) Scan(
 	}
 
 	return c.e.Scan(v, reverse, func(v eventlog.Event) error {
+		if skipFirst {
+			skipFirst = false
+			return nil
+		}
+
 		if err := ctx.Err(); err != nil {
 			return err
 		}

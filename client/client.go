@@ -115,13 +115,15 @@ func (c *Client) Metadata(ctx context.Context) (map[string]string, error) {
 // Scan reads events at the given version
 // calling fn for every received event.
 // Scans in reverse if reverse == true.
+// Skips the first Event at version if skipFirst == true.
 func (c *Client) Scan(
 	ctx context.Context,
 	version Version,
 	reverse bool,
+	skipFirst bool,
 	fn func(Event) error,
 ) error {
-	return c.impl.Scan(ctx, version, reverse, fn)
+	return c.impl.Scan(ctx, version, reverse, skipFirst, fn)
 }
 
 // VersionInitial returns either the first version of the log or
@@ -275,6 +277,7 @@ type Reader interface {
 		ctx context.Context,
 		version Version,
 		reverse bool,
+		skipFirst bool,
 		fn func(Event) error,
 	) error
 
