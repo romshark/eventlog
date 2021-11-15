@@ -58,7 +58,7 @@ The `GET /log/:version` endpoint returns an array of `{"time":"t","version":"v",
 
 ### Fetching metadata
 
-The `// GET /meta` endpoint returns all metadata as a JSON document.
+The `GET /meta` endpoint returns all metadata as a JSON document.
 
 ### Subscribing for updates
 
