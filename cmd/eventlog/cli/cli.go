@@ -52,8 +52,10 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 		),
 		cmdWithFlags(
 			&cobra.Command{
-				Use:     "create <file>",
-				Example: "create /path/to/file.db",
+				Use: "create <file>",
+				Example: `create /path/to/file.db ` +
+					`-m company:ajax ` +
+					`-m creation:$(date '+%Y_%m_%d_%H_%M_%S_%s')`,
 				Short:   "Database creation",
 				Long:    `Creates a new database file.`,
 				Aliases: []string{"c"},
