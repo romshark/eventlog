@@ -121,7 +121,10 @@ type ConfHTTP struct {
 func parseMetaField(s string) (key, value string, err error) {
 	p := strings.Split(s, ":")
 	if len(p) != 2 {
-		err = fmt.Errorf("invalid key value pair %q", p[1])
+		err = fmt.Errorf(
+			"invalid key value pair %q, must be formatted as: -m key:value",
+			s,
+		)
 		return
 	}
 	key, value = p[0], p[1]
