@@ -49,7 +49,7 @@ The `GET /version/initial` endpoint returns `{"version-initial":"x"}` where `x` 
 
 ### Scanning events
 
-The `GET /log/:version` endpoint returns an array of `{"time":"t","version":"v","version-previous":"vp","version-next":"vn","label":"l","payload":p}` event object where `t` is the time the event was recorded at, `v` is the version the event was recorded at, `vp` is the version of the antecedent event, `vn` is the version of the successive event, `l` is the event's label and `p` is the JSON payload document.
+The `GET /log/:version` endpoint returns an array of `{"time":"t","version":"v","version-previous":"vp","version-next":"vn","label":"l","payload":p}` event objects starting at the given version where `t` is the time the event was recorded at, `v` is the version the event was recorded at, `vp` is the version of the antecedent event, `vn` is the version of the successive event, `l` is the event's label and `p` is the JSON payload document.
 
 - Optionally, the `n` query parameter can be applied to limit the scan batch size.
 - Optionally, the `reverse` query parameter can be applied to scan in reversed order.
