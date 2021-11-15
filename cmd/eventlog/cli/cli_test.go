@@ -131,6 +131,20 @@ func TestRun(t *testing.T) {
 			},
 			err: expectNoErr,
 		},
+		{
+			in: []string{
+				"create",
+				"/path/to/file",
+				"-m", "foo",
+			},
+			prepare: func(m *MockExecuter) {},
+			err: func(t *testing.T, err error) {
+				require.Error(t, err)
+				require.Equal(
+					t, `invalid metadata flag value: "foo"`, err.Error(),
+				)
+			},
+		},
 	} {
 		t.Run(strings.Join(tt.in, "_"), func(t *testing.T) {
 			c := gomock.NewController(t)
