@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ type Executer interface {
 	HandleCheck(path string, quiet bool) error
 }
 
-func Run(osArgs []string, e Executer) error {
+func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 	app := &cobra.Command{
 		Use:   "eventlog",
 		Short: "A command-line interface for the event database.",
@@ -98,6 +99,8 @@ func Run(osArgs []string, e Executer) error {
 		),
 	)
 
+	app.SetOut(wOut)
+	app.SetErr(wErr)
 	app.SetArgs(osArgs)
 	return app.Execute()
 }

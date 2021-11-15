@@ -19,10 +19,9 @@ func main() {
 	lErr := log.New(os.Stderr, "ERR", log.LstdFlags)
 	if err := cli.Run(
 		os.Args,
-		&App{
-			logInfo: lInfo,
-			logErr:  lErr,
-		},
+		&App{logInfo: lInfo, logErr: lErr},
+		os.Stdout,
+		os.Stderr,
 	); err != nil {
 		lErr.Fatal(err)
 	}

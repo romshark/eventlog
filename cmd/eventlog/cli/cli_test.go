@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestRun(t *testing.T) {
 			c := gomock.NewController(t)
 			m := NewMockExecuter(c)
 			tt.prepare(m)
-			tt.err(t, cli.Run(tt.in, m))
+			tt.err(t, cli.Run(tt.in, m, io.Discard, io.Discard))
 		})
 	}
 }
