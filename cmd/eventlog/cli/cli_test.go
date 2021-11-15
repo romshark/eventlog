@@ -12,38 +12,6 @@ import (
 
 //go:generate go run github.com/golang/mock/mockgen -destination mock_gen_test.go -package cli_test -source cli.go Executer
 
-// 		{
-// 			in: []string{"open"},
-// 			err: func(t *testing.T, err error) {
-// 				require.Equal(t, "missing path", err.Error())
-// 			},
-// 		},
-// 		{
-// 			in: []string{"check"},
-// 			err: func(t *testing.T, err error) {
-// 				require.Equal(t, "missing path", err.Error())
-// 			},
-// 		},
-// 		{
-// 			in: []string{"create"},
-// 			err: func(t *testing.T, err error) {
-// 				require.Equal(t, "missing path", err.Error())
-// 			},
-// 		},
-// 	} {
-// 		t.Run("", func(t *testing.T) {
-// 			mode, err := cli.Parse(tt.in)
-// 			if tt.err != nil {
-// 				require.Error(t, err)
-// 				tt.err(t, err)
-// 			} else {
-// 				require.NoError(t, err)
-// 				require.Equal(t, tt.out, mode)
-// 			}
-// 		})
-// 	}
-// }
-
 func TestRun(t *testing.T) {
 	expectNoErr := func(t *testing.T, err error) {
 		require.NoError(t, err)
