@@ -18,7 +18,7 @@ import (
 
 func main() {
 	lInfo := log.New(os.Stdout, "", log.LstdFlags)
-	lErr := log.New(os.Stderr, "ERR", log.LstdFlags)
+	lErr := log.New(os.Stderr, "ERR: ", log.LstdFlags)
 	if err := cli.Run(
 		os.Args,
 		&App{logInfo: lInfo, logErr: lErr},
