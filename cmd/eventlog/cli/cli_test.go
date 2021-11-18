@@ -134,6 +134,21 @@ func TestRun(t *testing.T) {
 		},
 		{
 			in: []string{
+				"version",
+				"file:///path/to/file",
+			},
+			prepare: func(m *MockExecuter) {
+				m.EXPECT().
+					HandleVersion("file:///path/to/file").
+					Times(1).
+					Return(error(nil))
+			},
+			err: expectNoErr,
+		},
+
+		// ERR
+		{
+			in: []string{
 				"create",
 				"/path/to/file",
 				"-m", "foo",

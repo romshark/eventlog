@@ -16,6 +16,7 @@ type Executer interface {
 	HandleInmem(http ConfHTTP, meta map[string]string) error
 	HandleCreate(path string, meta map[string]string) error
 	HandleCheck(path string, quiet bool) error
+	HandleVersion(url string) error
 }
 
 func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
@@ -96,6 +97,19 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 					filePath := args[0]
 					return e.HandleCheck(filePath, getQuiet(c))
 				},
+			},
+			flagQuiet,
+		),
+		cmdWithFlags(
+			&cobra.Command{
+				Use:   "version <url>",
+				Short: "Database version inspection",
+				Long:  `Connects to a database and prints its latest version`,
+				RunE: func(c *cobra.Command, args []string) error {
+					url := args[0]
+					return e.HandleVersion(url)
+				},
+				Args: expectArgs("url"),
 			},
 			flagQuiet,
 		),

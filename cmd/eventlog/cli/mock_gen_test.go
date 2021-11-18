@@ -35,17 +35,17 @@ func (m *MockExecuter) EXPECT() *MockExecuterMockRecorder {
 }
 
 // HandleCheck mocks base method.
-func (m *MockExecuter) HandleCheck(path string, verbose bool) error {
+func (m *MockExecuter) HandleCheck(path string, quiet bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HandleCheck", path, verbose)
+	ret := m.ctrl.Call(m, "HandleCheck", path, quiet)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // HandleCheck indicates an expected call of HandleCheck.
-func (mr *MockExecuterMockRecorder) HandleCheck(path, verbose interface{}) *gomock.Call {
+func (mr *MockExecuterMockRecorder) HandleCheck(path, quiet interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleCheck", reflect.TypeOf((*MockExecuter)(nil).HandleCheck), path, verbose)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleCheck", reflect.TypeOf((*MockExecuter)(nil).HandleCheck), path, quiet)
 }
 
 // HandleCreate mocks base method.
@@ -88,4 +88,18 @@ func (m *MockExecuter) HandleRun(path string, http cli.ConfHTTP) error {
 func (mr *MockExecuterMockRecorder) HandleRun(path, http interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleRun", reflect.TypeOf((*MockExecuter)(nil).HandleRun), path, http)
+}
+
+// HandleVersion mocks base method.
+func (m *MockExecuter) HandleVersion(url string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HandleVersion", url)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// HandleVersion indicates an expected call of HandleVersion.
+func (mr *MockExecuterMockRecorder) HandleVersion(url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleVersion", reflect.TypeOf((*MockExecuter)(nil).HandleVersion), url)
 }

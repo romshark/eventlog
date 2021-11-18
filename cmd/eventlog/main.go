@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"time"
 
+	"github.com/romshark/eventlog/client"
 	"github.com/romshark/eventlog/cmd/eventlog/cli"
 	"github.com/romshark/eventlog/eventlog"
 	"github.com/romshark/eventlog/eventlog/file"
@@ -127,6 +129,40 @@ func (a *App) HandleCheck(path string, quiet bool) error {
 	}
 
 	return nil
+}
+
+func (a *App) HandleVersion(sourceURL string) error {
+	c, err := a.makeClient(sourceURL)
+	if err != nil {
+		return err
+	}
+	v, err := c.Version(context.Background())
+	if err != nil {
+		return fmt.Errorf("fetching version: %w", err)
+	}
+	a.logInfo.Printf("version: %s", v)
+	return nil
+}
+
+func (a *App) makeClient(sourceURL string) (*client.Client, error) {
+	u, err := url.Parse(sourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing URL: %w", err)
+	}
+	switch u.Scheme {
+	case "http", "https":
+		return client.New(client.NewHTTP(sourceURL, a.logErr, nil, nil)), nil
+
+	case "file":
+		f, err := file.Open(u.Path)
+		if err != nil {
+			return nil, fmt.Errorf("opening database file: %w", err)
+		}
+		return client.New(client.NewInmem(eventlog.New(f))), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", u.Scheme)
+	}
 }
 
 type FileOffsetLenReader struct{ *os.File }
