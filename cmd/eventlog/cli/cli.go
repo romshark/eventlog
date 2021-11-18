@@ -74,7 +74,7 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 		),
 		cmdWithFlags(
 			&cobra.Command{
-				Use:     "run",
+				Use:     "run <file>",
 				Short:   "Running database from file",
 				Long:    `Opens and runs a database from file`,
 				Aliases: []string{"r"},
@@ -90,13 +90,14 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 		),
 		cmdWithFlags(
 			&cobra.Command{
-				Use:   "check",
+				Use:   "check <file>",
 				Short: "Integrity check",
 				Long:  `Opens a database file and checks its integrity`,
 				RunE: func(c *cobra.Command, args []string) error {
 					filePath := args[0]
 					return e.HandleCheck(filePath, getQuiet(c))
 				},
+				Args: expectArgs("file"),
 			},
 			flagQuiet,
 		),
