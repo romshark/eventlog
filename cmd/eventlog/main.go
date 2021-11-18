@@ -20,7 +20,7 @@ func main() {
 	lInfo := log.New(os.Stdout, "", log.LstdFlags)
 	lErr := log.New(os.Stderr, "ERR: ", log.LstdFlags)
 	if err := cli.Run(
-		os.Args,
+		os.Args[1:],
 		&App{logInfo: lInfo, logErr: lErr},
 		os.Stdout,
 		os.Stderr,
