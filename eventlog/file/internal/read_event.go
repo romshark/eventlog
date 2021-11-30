@@ -9,11 +9,6 @@ import (
 	"github.com/romshark/eventlog/eventlog"
 )
 
-type ReaderConf struct {
-	MinPayloadLen uint32
-	MaxPayloadLen uint32
-}
-
 const SupportedProtoVersion = 5
 
 // ReadEvent reads an event entry from the given reader at the offset (version).
@@ -29,7 +24,7 @@ func ReadEvent(
 	reader OffsetReader,
 	hasher Hasher,
 	offset int64,
-	conf ReaderConf,
+	conf Config,
 ) (
 	checksum uint64,
 	event eventlog.Event,
@@ -110,8 +105,8 @@ func ReadEvent(
 	payloadLen := binary.LittleEndian.Uint32(buf4)
 
 	// Check payload length
-	if payloadLen < conf.MinPayloadLen ||
-		payloadLen > conf.MaxPayloadLen {
+	if payloadLen < uint32(conf.MinPayloadLen) ||
+		payloadLen > uint32(conf.MaxPayloadLen) {
 		// Invalid payload length indicates wrong version
 		err = eventlog.ErrInvalidVersion
 		return
@@ -148,11 +143,11 @@ func ReadEvent(
 
 type ReadBuffer []byte
 
-func (b ReadBuffer) MustValidate(conf ReaderConf) {
+func (b ReadBuffer) MustValidate(conf Config) {
 	requiredBufferLen := conf.MaxPayloadLen +
 		8 + // Previous version
-		uint32(256) // Max label length
-	if uint32(len(b)) < requiredBufferLen {
+		256 // Max label length
+	if len(b) < requiredBufferLen {
 		panic(fmt.Errorf(
 			"buffer too small (given: %d; required: %d)",
 			len(b), requiredBufferLen,

@@ -4,11 +4,12 @@ package internal
 const (
 	MaxLabelLen = 65535
 
-	StatusMsgErrInvalidPayload         = "ErrInvalidPayload"
-	StatusMsgErrInvalidTypeName        = "ErrInvalidTypeName"
-	StatusMsgErrMismatchingVersions    = "ErrMismatchingVersions"
-	StatusMsgErrInvalidVersion         = "ErrInvalidVersion"
-	StatusMsgErrBadArgument            = "ErrBadArgument"
-	StatusMsgErrMalformedVersion       = "ErrMalformedVersion"
-	StatusMsgErrUnsupportedContentType = "ErrUnsupportedContentType"
+	StatusMsgErrInvalidPayload           = "ErrInvalidPayload"
+	StatusMsgErrInvalidTypeName          = "ErrInvalidTypeName"
+	StatusMsgErrMismatchingVersions      = "ErrMismatchingVersions"
+	StatusMsgErrPayloadSizeLimitExceeded = "ErrPayloadSizeLimitExceeded"
+	StatusMsgErrInvalidVersion           = "ErrInvalidVersion"
+	StatusMsgErrBadArgument              = "ErrBadArgument"
+	StatusMsgErrMalformedVersion         = "ErrMalformedVersion"
+	StatusMsgErrUnsupportedContentType   = "ErrUnsupportedContentType"
 )

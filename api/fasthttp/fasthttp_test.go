@@ -9,6 +9,7 @@ import (
 
 	apifasthttp "github.com/romshark/eventlog/api/fasthttp"
 	"github.com/romshark/eventlog/eventlog"
+	"github.com/romshark/eventlog/eventlog/file"
 	"github.com/romshark/eventlog/eventlog/inmem"
 	"github.com/romshark/eventlog/internal"
 
@@ -98,7 +99,10 @@ type Setup struct {
 }
 
 func setup(t *testing.T) (s Setup) {
-	s.DB = eventlog.New(inmem.New(map[string]string{"name": "testlog"}))
+	s.DB = eventlog.New(inmem.New(
+		file.MaxPayloadLen,
+		map[string]string{"name": "testlog"},
+	))
 	t.Cleanup(func() {
 		if err := s.DB.Close(); err != nil {
 			panic(fmt.Errorf("closing eventlog: %s", err))

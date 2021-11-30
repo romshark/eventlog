@@ -142,7 +142,7 @@ func TestReadEvent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			r := require.New(t)
-			conf := internal.ReaderConf{
+			conf := internal.Config{
 				MinPayloadLen: file.MinPayloadLen,
 				MaxPayloadLen: file.MaxPayloadLen,
 			}

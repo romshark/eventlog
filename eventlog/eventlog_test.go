@@ -14,6 +14,7 @@ import (
 	"github.com/romshark/eventlog/eventlog/file"
 	logfile "github.com/romshark/eventlog/eventlog/file"
 	"github.com/romshark/eventlog/eventlog/inmem"
+	"github.com/romshark/eventlog/internal/makestr"
 
 	"github.com/stretchr/testify/require"
 )
@@ -245,6 +246,30 @@ func TestAppendInvalidPayload(t *testing.T) {
 	})
 }
 
+// TestAppendPayloadExceedsLimit assumes ErrInvalidPayload
+// to be returned when appending JSON payloads exceeding the size limit.
+func TestAppendPayloadExceedsLimit(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		l := s.EventLog
+
+		p := makestr.MakeJSON(file.MaxPayloadLen + 1)
+		require.True(t, len(p) > file.MaxPayloadLen)
+
+		pv, v, tm, err := l.Append(eventlog.EventData{
+			Label:       []byte("foo"),
+			PayloadJSON: []byte(p),
+		})
+		require.Error(t, err)
+		require.True(t,
+			errors.Is(err, eventlog.ErrPayloadSizeLimitExceeded),
+			"unexpected error: (%T) %s", err, err.Error(),
+		)
+		require.Zero(t, pv)
+		require.Zero(t, v)
+		require.Zero(t, tm)
+	})
+}
+
 // TestAppendInvalidLabel assumes ErrLabelContainsIllegalChar to be returned
 // when using illegal characters for the label
 func TestAppendInvalidLabel(t *testing.T) {
@@ -401,7 +426,7 @@ func test(t *testing.T, fn func(*testing.T, Setup)) {
 		return map[string]string{"name": "testlog"}
 	}
 	t.Run("Inmem", func(t *testing.T) {
-		l := eventlog.New(inmem.New(meta()))
+		l := eventlog.New(inmem.New(logfile.MaxPayloadLen, meta()))
 		t.Cleanup(func() {
 			if err := l.Close(); err != nil {
 				panic(fmt.Errorf("closing eventlog: %s", err))

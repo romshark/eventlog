@@ -11,7 +11,7 @@ func ReadHeader(
 	buffer ReadBuffer,
 	reader OffsetReader,
 	hasher Hasher,
-	conf ReaderConf,
+	conf Config,
 	onMeta func(field, value string) error,
 ) (headerLen int64, err error) {
 	buffer.MustValidate(conf)

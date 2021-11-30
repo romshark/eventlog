@@ -275,7 +275,6 @@ func TestErrAppendCheckNoAssumedVersion(t *testing.T) {
 			"",
 			makeEvent(t, "foo", Doc{"foo": "bar"}),
 		)
-		r.Error(err)
 		RequireErr(t, err, client.ErrInvalidVersion)
 		r.Zero(v)
 		r.Zero(tm)
@@ -285,11 +284,100 @@ func TestErrAppendCheckNoAssumedVersion(t *testing.T) {
 			"",
 			makeEvent(t, "foo", Doc{"foo": "bar"}),
 		)
-		r.Error(err)
 		RequireErr(t, err, client.ErrInvalidVersion)
 		r.Zero(v)
 		r.Zero(fv)
 		r.Zero(tm)
+	})
+}
+
+func TestErrAppendPayloadExceedsLimit(t *testing.T) {
+	test(t, func(t *testing.T, s Setup) {
+		r := require.New(t)
+
+		e := []eventlog.EventData{{
+			Label:       []byte(""),
+			PayloadJSON: []byte(`{"k":"too long"}`),
+		}, {
+			Label:       []byte(""),
+			PayloadJSON: []byte(`{"k":"second"}`),
+		}}
+
+		{
+			s.Logger.EXPECT().
+				AppendCheck(uint64(0), e[0]).
+				Times(1).
+				Return(
+					uint64(0),
+					time.Time{},
+					eventlog.ErrPayloadSizeLimitExceeded,
+				)
+
+			v, tm, err := s.Client.AppendCheck(context.Background(), "0", e[0])
+			RequireErr(t, client.ErrPayloadSizeLimitExceeded, err)
+			r.Zero(v)
+			r.Zero(tm)
+		}
+
+		{
+			s.Logger.EXPECT().
+				AppendCheckMulti(uint64(0), e).
+				Times(1).
+				Return(
+					uint64(0),
+					uint64(0),
+					time.Time{},
+					eventlog.ErrPayloadSizeLimitExceeded,
+				)
+
+			vf, v, tm, err := s.Client.AppendCheckMulti(
+				context.Background(), "0", e...,
+			)
+			RequireErr(t, client.ErrPayloadSizeLimitExceeded, err)
+			r.Zero(vf)
+			r.Zero(v)
+			r.Zero(tm)
+		}
+
+		{
+			s.Logger.EXPECT().
+				Append(e[0]).
+				Times(1).
+				Return(
+					uint64(0),
+					uint64(0),
+					time.Time{},
+					eventlog.ErrPayloadSizeLimitExceeded,
+				)
+
+			vp, v, tm, err := s.Client.Append(context.Background(), e[0])
+			RequireErr(t, client.ErrPayloadSizeLimitExceeded, err)
+			r.Zero(vp)
+			r.Zero(v)
+			r.Zero(tm)
+		}
+
+		{
+			s.Logger.EXPECT().
+				AppendMulti(e).
+				Times(1).
+				Return(
+					uint64(0),
+					uint64(0),
+					uint64(0),
+					time.Time{},
+					eventlog.ErrPayloadSizeLimitExceeded,
+				)
+
+			vp, vf, v, tm, err := s.Client.AppendMulti(
+				context.Background(), e...,
+			)
+			RequireErr(t, client.ErrPayloadSizeLimitExceeded, err)
+			r.Zero(vp)
+			r.Zero(vf)
+			r.Zero(v)
+			r.Zero(tm)
+		}
 	})
 }
 
@@ -991,6 +1079,8 @@ func (m Callback) Matches(fn interface{}) bool {
 func (Callback) String() string { return "is a callback lambda function" }
 
 func RequireErr(t *testing.T, expected, actual error) {
+	t.Helper()
+	require.Error(t, actual)
 	require.True(
 		t,
 		errors.Is(actual, expected),

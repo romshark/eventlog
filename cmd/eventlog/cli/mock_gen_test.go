@@ -63,17 +63,18 @@ func (mr *MockExecuterMockRecorder) HandleCreate(path, meta interface{}) *gomock
 }
 
 // HandleInmem mocks base method.
-func (m *MockExecuter) HandleInmem(http cli.ConfHTTP, meta map[string]string) error {
+func (m *MockExecuter) HandleInmem(http cli.ConfHTTP, maxPayloadLen int, meta map[string]string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HandleInmem", http, meta)
+	ret := m.ctrl.Call(m, "HandleInmem", http, maxPayloadLen, meta)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // HandleInmem indicates an expected call of HandleInmem.
-func (mr *MockExecuterMockRecorder) HandleInmem(http, meta interface{}) *gomock.Call {
+func (mr *MockExecuterMockRecorder) HandleInmem(http, maxPayloadLen, meta interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleInmem", reflect.TypeOf((*MockExecuter)(nil).HandleInmem), http, meta)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HandleInmem", reflect.TypeOf((*MockExecuter)(nil).HandleInmem), http, maxPayloadLen, meta)
+}
 }
 
 // HandleRun mocks base method.

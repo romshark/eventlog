@@ -176,24 +176,8 @@ func (c *HTTP) Append(
 			r.SetBody(encoded)
 		},
 		func(r *fasthttp.Response) error {
-			if r.StatusCode() == fasthttp.StatusBadRequest {
-				switch {
-				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
-					return ErrMismatchingVersions
-				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
-					return ErrInvalidPayload
-				}
-				return fmt.Errorf(
-					"unexpected client-side error: (%d) %s",
-					r.StatusCode(),
-					string(r.Body()),
-				)
-			} else if r.StatusCode() != fasthttp.StatusOK {
-				return fmt.Errorf(
-					"unexpected status code: %d (%q)",
-					r.StatusCode(),
-					string(r.Body()),
-				)
+			if err := handleAppendErr(r); err != nil {
+				return err
 			}
 
 			var re struct {
@@ -238,24 +222,8 @@ func (c *HTTP) AppendMulti(
 			r.SetBody(encoded)
 		},
 		func(r *fasthttp.Response) error {
-			if r.StatusCode() == fasthttp.StatusBadRequest {
-				switch {
-				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
-					return ErrMismatchingVersions
-				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
-					return ErrInvalidPayload
-				}
-				return fmt.Errorf(
-					"unexpected client-side error: (%d) %s",
-					r.StatusCode(),
-					string(r.Body()),
-				)
-			} else if r.StatusCode() != fasthttp.StatusOK {
-				return fmt.Errorf(
-					"unexpected status code: %d (%q)",
-					r.StatusCode(),
-					string(r.Body()),
-				)
+			if err := handleAppendErr(r); err != nil {
+				return err
 			}
 
 			var re struct {
@@ -301,24 +269,8 @@ func (c *HTTP) AppendCheck(
 			r.SetBody(encoded)
 		},
 		func(r *fasthttp.Response) error {
-			if r.StatusCode() == fasthttp.StatusBadRequest {
-				switch {
-				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
-					return ErrMismatchingVersions
-				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
-					return ErrInvalidPayload
-				}
-				return fmt.Errorf(
-					"unexpected client-side error: (%d) %s",
-					r.StatusCode(),
-					string(r.Body()),
-				)
-			} else if r.StatusCode() != fasthttp.StatusOK {
-				return fmt.Errorf(
-					"unexpected status code: %d (%q)",
-					r.StatusCode(),
-					string(r.Body()),
-				)
+			if err := handleAppendErr(r); err != nil {
+				return err
 			}
 
 			var re struct {
@@ -361,24 +313,8 @@ func (c *HTTP) AppendCheckMulti(
 			r.SetBody(encoded)
 		},
 		func(r *fasthttp.Response) error {
-			if r.StatusCode() == fasthttp.StatusBadRequest {
-				switch {
-				case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
-					return ErrMismatchingVersions
-				case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
-					return ErrInvalidPayload
-				}
-				return fmt.Errorf(
-					"unexpected client-side error: (%d) %s",
-					r.StatusCode(),
-					string(r.Body()),
-				)
-			} else if r.StatusCode() != fasthttp.StatusOK {
-				return fmt.Errorf(
-					"unexpected status code: %d (%q)",
-					r.StatusCode(),
-					string(r.Body()),
-				)
+			if err := handleAppendErr(r); err != nil {
+				return err
 			}
 
 			var re struct {
@@ -659,4 +595,29 @@ func isNetErrRecoverable(err error) bool {
 		return v.Temporary() || v.Timeout()
 	}
 	return false
+}
+
+func handleAppendErr(r *fasthttp.Response) error {
+	if r.StatusCode() == fasthttp.StatusBadRequest {
+		switch {
+		case string(r.Body()) == intrn.StatusMsgErrMismatchingVersions:
+			return ErrMismatchingVersions
+		case string(r.Body()) == intrn.StatusMsgErrInvalidPayload:
+			return ErrInvalidPayload
+		case string(r.Body()) == intrn.StatusMsgErrPayloadSizeLimitExceeded:
+			return ErrPayloadSizeLimitExceeded
+		}
+		return fmt.Errorf(
+			"unexpected client-side error: (%d) %s",
+			r.StatusCode(),
+			string(r.Body()),
+		)
+	} else if r.StatusCode() != fasthttp.StatusOK {
+		return fmt.Errorf(
+			"unexpected status code: %d (%q)",
+			r.StatusCode(),
+			string(r.Body()),
+		)
+	}
+	return nil
 }

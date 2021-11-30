@@ -113,6 +113,7 @@ var (
 	ErrLabelContainsIllegalChars = errors.New(
 		"label contains illegal characters",
 	)
+	ErrPayloadSizeLimitExceeded = errors.New("payload size limit exceeded")
 )
 
 type EventLog struct {

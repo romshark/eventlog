@@ -23,7 +23,7 @@ func CheckIntegrity(
 		buffer,
 		reader,
 		hash,
-		readConfig,
+		config,
 		func(field, value string) error {
 			// Ignore meta fields, but make sure they're parsed.
 			return nil
@@ -45,7 +45,7 @@ func CheckIntegrity(
 
 	for i := int64(headerLen); ; {
 		checksum, event, n, err :=
-			internal.ReadEvent(buffer, reader, hash, i, readConfig)
+			internal.ReadEvent(buffer, reader, hash, i, config)
 		if err == io.EOF {
 			break
 		} else if err != nil {

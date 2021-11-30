@@ -79,7 +79,10 @@ func TestWriteEvent(t *testing.T) {
 			w := &testWriterRecorder{}
 			buf := make([]byte, 1024)
 			written, err := internal.WriteEvent(
-				w, buf, tt.checksum, tt.offset, tt.event,
+				w, buf, tt.checksum, tt.offset, tt.event, internal.Config{
+					MinPayloadLen: 7,
+					MaxPayloadLen: 512,
+				},
 			)
 			r.NoError(err)
 

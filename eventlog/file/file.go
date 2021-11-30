@@ -2,6 +2,7 @@ package file
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,7 +45,7 @@ const (
 // Make sure *File implements EventLogger
 var _ eventlog.EventLogger = new(File)
 
-var readConfig = internal.ReaderConf{
+var config = internal.Config{
 	MaxPayloadLen: MaxPayloadLen,
 	MinPayloadLen: MinPayloadLen,
 }
@@ -92,10 +93,7 @@ func Open(filePath string) (*File, error) {
 		buf,
 		f.file,
 		f.hasher,
-		internal.ReaderConf{
-			MinPayloadLen: MinPayloadLen,
-			MaxPayloadLen: MaxPayloadLen,
-		},
+		config,
 		func(field, value string) error {
 			f.metadata[field] = value
 			return nil
@@ -117,7 +115,7 @@ func Open(filePath string) (*File, error) {
 
 		// Check the integrity of the last event
 		if _, _, _, err := internal.ReadEvent(
-			buf, f.file, f.hasher, int64(f.latestVersion), readConfig,
+			buf, f.file, f.hasher, int64(f.latestVersion), config,
 		); err != nil {
 			return nil, fmt.Errorf("checking integrity of last event: %w", err)
 		}
@@ -148,8 +146,13 @@ func Create(
 	}
 	defer f.Close()
 
+	metaJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("encoding metadata JSON: %w", err)
+	}
+
 	if _, err := internal.WriteFileHeader(
-		f, xxhash.New(), time.Now(), metadata,
+		f, xxhash.New(), time.Now(), metaJSON, config,
 	); err != nil {
 		return fmt.Errorf("writing file header: %w", err)
 	}
@@ -230,7 +233,7 @@ func (f *File) Scan(
 			// Read and ignore the event which has a subsequent one
 			// to determine the version of the latter
 			_, _, n, err := internal.ReadEvent(
-				buf, f.file, f.hasher, int64(version), readConfig,
+				buf, f.file, f.hasher, int64(version), config,
 			)
 			if err == io.EOF {
 				return fmt.Errorf(
@@ -242,7 +245,7 @@ func (f *File) Scan(
 
 			// Determine next version
 			_, _, n, err = internal.ReadEvent(
-				buf, f.file, f.hasher, int64(version+uint64(n)), readConfig,
+				buf, f.file, f.hasher, int64(version+uint64(n)), config,
 			)
 			if err == io.EOF {
 				panic("there must have been a subsequent event!")
@@ -258,7 +261,7 @@ func (f *File) Scan(
 
 		for i := int64(version); i >= int64(f.headerLength); {
 			_, event, n, err :=
-				internal.ReadEvent(buf, f.file, f.hasher, i, readConfig)
+				internal.ReadEvent(buf, f.file, f.hasher, i, config)
 			if err == io.EOF {
 				break
 			} else if err != nil {
@@ -278,7 +281,7 @@ func (f *File) Scan(
 	} else {
 		for i := int64(version); ; {
 			_, event, n, err :=
-				internal.ReadEvent(buf, f.file, f.hasher, i, readConfig)
+				internal.ReadEvent(buf, f.file, f.hasher, i, config)
 			if err == io.EOF {
 				break
 			} else if err != nil {
@@ -318,6 +321,7 @@ func (f *File) write(
 			EventData:       event,
 			Timestamp:       timestamp,
 		},
+		config,
 	)
 	if err != nil {
 		return err
@@ -349,6 +353,7 @@ func (f *File) writeMulti(
 				EventData:       e,
 				Timestamp:       timestamp,
 			},
+			config,
 		); err != nil {
 			f.writerOffset = initialWriterOffset
 			f.latestVersion = initialLatestVersion

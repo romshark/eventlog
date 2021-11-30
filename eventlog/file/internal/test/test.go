@@ -75,7 +75,7 @@ func Compose(
 		NewBuffer(),
 		FakeSrc(c),
 		xxhash.New(),
-		internal.ReaderConf{
+		internal.Config{
 			MinPayloadLen: 7,
 			MaxPayloadLen: 512,
 		},

@@ -2,32 +2,22 @@ package internal
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/romshark/eventlog/eventlog"
 )
 
-const MaxMetaDataLen = 4294967295
-
 // WriteFileHeader writes the file header
 func WriteFileHeader(
 	writer SyncWriter,
 	hasher Hasher,
 	creation time.Time,
-	metadata map[string]string,
+	metadataJSON []byte,
+	conf Config,
 ) (written int, err error) {
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return written, fmt.Errorf("encoding metadata JSON: %w", err)
-	}
-
-	if l := len(metadataJSON); l > MaxMetaDataLen {
-		return written, fmt.Errorf(
-			"max meta info JSON length (%d) exceeded (%d)",
-			MaxMetaDataLen, l,
-		)
+	if err := conf.VerifyPayloadLen(metadataJSON); err != nil {
+		return 0, err
 	}
 
 	var metaChecksum uint64
@@ -62,6 +52,7 @@ func WriteFileHeader(
 				PayloadJSON: metadataJSON,
 			},
 		},
+		conf,
 	)
 	written += metaEntryLen
 	if err != nil {

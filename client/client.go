@@ -247,11 +247,12 @@ func (c *Client) TryAppendMulti(
 
 // Error values
 var (
-	ErrMismatchingVersions = eventlog.ErrMismatchingVersions
-	ErrInvalidPayload      = eventlog.ErrInvalidPayload
-	ErrInvalidVersion      = errors.New("invalid version")
-	ErrMalformedVersion    = errors.New("malformed version")
-	ErrLabelTooLong        = fmt.Errorf(
+	ErrMismatchingVersions      = eventlog.ErrMismatchingVersions
+	ErrInvalidPayload           = eventlog.ErrInvalidPayload
+	ErrPayloadSizeLimitExceeded = eventlog.ErrPayloadSizeLimitExceeded
+	ErrInvalidVersion           = errors.New("invalid version")
+	ErrMalformedVersion         = errors.New("malformed version")
+	ErrLabelTooLong             = fmt.Errorf(
 		"label must not exceed %d bytes",
 		internal.MaxLabelLen,
 	)

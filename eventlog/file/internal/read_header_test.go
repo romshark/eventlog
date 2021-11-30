@@ -59,7 +59,7 @@ func TestReadHeader(t *testing.T) {
 		test.NewBuffer(),
 		rec,
 		xxhash.New(),
-		internal.ReaderConf{
+		internal.Config{
 			MinPayloadLen: 7,
 			MaxPayloadLen: 512,
 		},

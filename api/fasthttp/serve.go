@@ -101,7 +101,7 @@ func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		return nil
 	}
 
-	if err := handleAppend(
+	if err = handleAppend(
 		ctx,
 		func(e eventlog.EventData) (
 			versionPrevious uint64,
@@ -129,13 +129,23 @@ func (s *Server) handleAppendCheck(ctx *fasthttp.RequestCtx) error {
 		ctx.SetBodyString(internal.StatusMsgErrMismatchingVersions)
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		return nil
+	} else if err == eventlog.ErrPayloadSizeLimitExceeded {
+		ctx.SetBodyString(internal.StatusMsgErrPayloadSizeLimitExceeded)
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return nil
 	}
-	return nil
+	return err
 }
 
 // handleAppendNocheck handles POST /log/
 func (s *Server) handleAppendNocheck(ctx *fasthttp.RequestCtx) error {
-	return handleAppend(ctx, s.eventLog.Append, s.eventLog.AppendMulti)
+	err := handleAppend(ctx, s.eventLog.Append, s.eventLog.AppendMulti)
+	if err == eventlog.ErrPayloadSizeLimitExceeded {
+		ctx.SetBodyString(internal.StatusMsgErrPayloadSizeLimitExceeded)
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return nil
+	}
+	return err
 }
 
 // handleMeta handles GET /meta

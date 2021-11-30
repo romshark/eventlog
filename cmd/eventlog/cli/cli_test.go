@@ -8,6 +8,7 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	cli "github.com/romshark/eventlog/cmd/eventlog/cli"
+	"github.com/romshark/eventlog/eventlog/file"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +56,11 @@ func TestRun(t *testing.T) {
 			in: []string{"inmem"},
 			prepare: func(m *MockExecuter) {
 				m.EXPECT().
-					HandleInmem(DefaultHTTPConf(), map[string]string{}).
+					HandleInmem(
+						DefaultHTTPConf(),
+						file.MaxPayloadLen,
+						map[string]string{},
+					).
 					Times(1).
 					Return(error(nil))
 			},
@@ -68,17 +73,22 @@ func TestRun(t *testing.T) {
 				"--http-read-timeout", "5ms",
 				"--meta", "foo:bar",
 				"--meta", "bazz:fazz",
+				"--max-payload-len", "1024",
 			},
 			prepare: func(m *MockExecuter) {
 				m.EXPECT().
-					HandleInmem(cli.ConfHTTP{
+					HandleInmem(
+						cli.ConfHTTP{
 						Host:             "testhost:9090",
 						ReadTimeout:      5 * time.Millisecond,
 						MaxScanBatchSize: 1000,
-					}, map[string]string{
+						},
+						1024,
+						map[string]string{
 						"foo":  "bar",
 						"bazz": "fazz",
-					}).
+						},
+					).
 					Times(1).
 					Return(error(nil))
 			},

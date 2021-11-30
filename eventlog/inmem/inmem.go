@@ -32,16 +32,28 @@ func newInmemEvent(event eventlog.EventData, tm time.Time) inmemEvent {
 
 // Inmem is a volatile in-memory event log
 type Inmem struct {
-	metadata map[string]string
-	lock     sync.RWMutex
-	store    []inmemEvent
+	payloadLimit int
+	metadata     map[string]string
+	lock         sync.RWMutex
+	store        []inmemEvent
 }
 
 // New returns a new volatile in-memory event log instance
-func New(metadata map[string]string) *Inmem {
+func New(
+	payloadLimit int,
+	metadata map[string]string,
+) *Inmem {
 	return &Inmem{
-		metadata: metadata,
+		payloadLimit: payloadLimit,
+		metadata:     metadata,
 	}
+}
+
+func (m *Inmem) checkLimit(payloadJSON []byte) error {
+	if len(payloadJSON) > m.payloadLimit {
+		return eventlog.ErrPayloadSizeLimitExceeded
+	}
+	return nil
 }
 
 func (m *Inmem) MetadataLen() int {
@@ -161,6 +173,10 @@ func (m *Inmem) Append(event eventlog.EventData) (
 	tm time.Time,
 	err error,
 ) {
+	if err = m.checkLimit(event.PayloadJSON); err != nil {
+		return
+	}
+
 	tm = time.Now().UTC()
 	ev := newInmemEvent(event, tm)
 
@@ -180,6 +196,12 @@ func (m *Inmem) AppendMulti(events ...eventlog.EventData) (
 	tm time.Time,
 	err error,
 ) {
+	for _, e := range events {
+		if err = m.checkLimit(e.PayloadJSON); err != nil {
+			return
+		}
+	}
+
 	ev := make([]inmemEvent, len(events))
 	tm = time.Now().UTC()
 	for i, e := range events {
@@ -211,6 +233,10 @@ func (m *Inmem) AppendCheck(
 	tm time.Time,
 	err error,
 ) {
+	if err = m.checkLimit(event.PayloadJSON); err != nil {
+		return
+	}
+
 	tm = time.Now().UTC()
 	ev := newInmemEvent(event, tm)
 
@@ -237,6 +263,12 @@ func (m *Inmem) AppendCheckMulti(
 	tm time.Time,
 	err error,
 ) {
+	for _, e := range events {
+		if err = m.checkLimit(e.PayloadJSON); err != nil {
+			return
+		}
+	}
+
 	ev := make([]inmemEvent, len(events))
 	tm = time.Now().UTC()
 	for i, e := range events {

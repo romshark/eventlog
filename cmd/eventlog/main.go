@@ -34,8 +34,12 @@ type App struct {
 	logErr  *log.Logger
 }
 
-func (a *App) HandleInmem(confHTTP cli.ConfHTTP, meta map[string]string) error {
-	eventLog := eventlog.New(inmem.New(meta))
+func (a *App) HandleInmem(
+	confHTTP cli.ConfHTTP,
+	maxPayloadLen int,
+	meta map[string]string,
+) error {
+	eventLog := eventlog.New(inmem.New(maxPayloadLen, meta))
 	return launchAPIFastHTTP(a.logInfo, a.logErr, eventLog, confHTTP)
 }
 

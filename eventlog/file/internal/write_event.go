@@ -25,7 +25,12 @@ func WriteEvent(
 	checksum uint64,
 	offset int64,
 	event eventlog.Event,
+	conf Config,
 ) (written int, err error) {
+	if err := conf.VerifyPayloadLen(event.PayloadJSON); err != nil {
+		return 0, err
+	}
+
 	if len(buffer) < 8 {
 		buffer = make([]byte, 8)
 	}

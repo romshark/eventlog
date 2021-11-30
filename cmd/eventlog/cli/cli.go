@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/romshark/eventlog/eventlog/file"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 type Executer interface {
 	HandleRun(path string, http ConfHTTP) error
-	HandleInmem(http ConfHTTP, meta map[string]string) error
+	HandleInmem(http ConfHTTP, maxPayloadLen int, meta map[string]string) error
 	HandleCreate(path string, meta map[string]string) error
 	HandleCheck(path string, quiet bool) error
 	HandleVersion(url string) error
@@ -43,13 +44,18 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 					if err != nil {
 						return err
 					}
-					return e.HandleInmem(getConfHTTP(c), m)
+					return e.HandleInmem(
+						getConfHTTP(c),
+						getMaxPayloadLen(c),
+						m,
+					)
 				},
 			},
 			setFlagHTTPHost,
 			setFlagHTTPReadTimeout,
 			setFlagHTTPMaxScanBatchSize,
 			setFlagMeta,
+			setFlagMaxPayloadLen,
 		),
 		cmdWithFlags(
 			&cobra.Command{
@@ -99,7 +105,7 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 				},
 				Args: expectArgs("file"),
 			},
-			flagQuiet,
+			setFlagQuiet,
 		),
 		cmdWithFlags(
 			&cobra.Command{
@@ -112,7 +118,7 @@ func Run(osArgs []string, e Executer, wOut, wErr io.Writer) error {
 				},
 				Args: expectArgs("url"),
 			},
-			flagQuiet,
+			setFlagQuiet,
 		),
 	)
 
@@ -217,7 +223,15 @@ func setFlagHTTPMaxScanBatchSize(c *cobra.Command) {
 	})
 }
 
-func flagQuiet(c *cobra.Command) {
+func setFlagMaxPayloadLen(c *cobra.Command) {
+	c.Flags().AddFlag(&pflag.Flag{
+		Name:  "max-payload-len",
+		Usage: "payload length limit",
+		Value: fvInt(file.MaxPayloadLen),
+	})
+}
+
+func setFlagQuiet(c *cobra.Command) {
 	c.Flags().AddFlag(&pflag.Flag{
 		Name:        "quiet",
 		Usage:       "quiet mode",
@@ -264,4 +278,10 @@ func getMeta(c *cobra.Command) (map[string]string, error) {
 
 func getQuiet(c *cobra.Command) bool {
 	return c.Flag("quiet").Value.(*fv).V.(bool)
+}
+
+func getMaxPayloadLen(c *cobra.Command) int {
+	fmt.Println("OKAY: ", c.Flag("max-payload-len").Value.(*fv).V.(int))
+
+	return c.Flag("max-payload-len").Value.(*fv).V.(int)
 }
